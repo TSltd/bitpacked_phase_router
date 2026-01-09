@@ -10,6 +10,8 @@ The router supports both raw binary matrices and pre-packed bit arrays. When raw
 
 The router is **CPU-first by design**, leveraging fast bitwise operations, cache-efficient memory access, and early termination, making it well-suited for CPU-only and embedded systems (see [Why CPU?](docs/why_cpu.md)).
 
+The design builds on earlier theoretical work on phase-separated routing, with significant practical extensions in this implementation (see [Original Paper](docs/Phase-Separated_Binary_Coupling_Matrices.pdf)).
+
 Additional features include:
 
 - **Automatic matrix alignment** for optimal phase separation (left-aligned rows, top-aligned columns).
@@ -78,6 +80,8 @@ This combination of **binary operations, deterministic balancing, and paralleliz
 - **POSIX-compliant system** (for `clock_gettime`)
 - **OpenMP** (optional but recommended for large `N`)
 - **pybind11** and **numpy headers** for Python extension
+- **setuptools** needed for setup.py build_ext
+- **Python dev headers** usually installed with Python dev package (python3-dev or python3-devel) if using Linux.
 
 ---
 

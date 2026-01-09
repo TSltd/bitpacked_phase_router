@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+title: Bit-Packed Phase Router
+authors:
+  - family-names: Shirley
+    given-names: Daniel
+year: 2026
+url: https://github.com/TSltd/bitpacked-phase-router
+preferred-citation:
+  type: article
+  title: "Phase-Separated Binary Coupling Matrices via Barrel-Shifting: A Discrete Approach to Approximate Doubly Stochastic Transformations"
+  authors:
+    - family-names: Shirley
+      given-names: Daniel
+  year: 2026
+  url: https://github.com/TSltd/bitpacked_phase_router/blob/master/docs/Phase-Separated_Binary_Coupling_Matrices.pdf

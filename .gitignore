@@ -1,4 +1,22 @@
+# Python compiled files
+*.pyc
+__pycache__/
+
+# C/C++ build artifacts
+*.o
+*.so
+*.a
+*.dll
+*.dylib
+
+# Build directories
+build/
+dist/
+*.egg-info/
 
 # Virtual environments
-/venv/
-/.venv/
+.venv/
+env/
+
+# VSCode settings
+.vscode/
