@@ -7,12 +7,6 @@ def left_top_align(S, T):
     """
     Transform arbitrary binary matrices into left-aligned rows (S)
     and top-aligned columns (T) for proper phase-separated routing.
-
-    Parameters:
-        S: (N, N) uint8 source matrix
-        T: (N, N) uint8 target matrix
-    Returns:
-        S_aligned, T_aligned
     """
     N = S.shape[0]
 
@@ -37,13 +31,10 @@ k = 64     # targets per source
 # -------------------- Generate random binary matrices --------------------
 print(f"Generating random binary matrices N={N}, k={k}...")
 
-# Random source matrix (unaligned)
 S_random = np.random.randint(0, 2, (N, N), dtype=np.uint8)
-
-# Random target matrix (unaligned)
 T_random = np.random.randint(0, 2, (N, N), dtype=np.uint8)
 
-# For backward compatibility, also create structured aligned matrices
+# Structured aligned matrices for comparison
 print("Generating structured aligned matrices for comparison...")
 S_np = np.zeros((N, N), dtype=np.uint8)
 row_counts = np.random.randint(1, k+1, size=N)
@@ -65,7 +56,7 @@ routes_torch = torch.zeros((N, k), dtype=torch.int32)
 routes_bits = np.zeros((N, k), dtype=np.int32)
 routes_par = np.zeros((N, k), dtype=np.int32)
 
-# -------------------- 1️⃣ Raw NumPy matrices --------------------
+# -------------------- 1. Raw NumPy matrices --------------------
 print("\n=== Routing from raw NumPy matrices ===")
 t0 = time.time()
 router.router(S_np, T_np, k, routes_np)
@@ -76,7 +67,7 @@ print(f"Total active routes: {total_active}")
 print(f"Average per row: {total_active/N:.2f}")
 print(f"Fill ratio: {total_active/(N*k):.3f}")
 
-# -------------------- 2️⃣ PyTorch tensors --------------------
+# -------------------- 2. PyTorch tensors --------------------
 print("\n=== Routing from PyTorch tensors ===")
 t0 = time.time()
 router.router(S_torch, T_torch, k, routes_torch.numpy())
@@ -87,22 +78,27 @@ print(f"Total active routes: {total_active}")
 print(f"Average per row: {total_active/N:.2f}")
 print(f"Fill ratio: {total_active/(N*k):.3f}")
 
-# -------------------- 3️⃣ Pre-packed bit arrays --------------------
-print("\n=== Routing from pre-packed bit arrays ===")
-col_perm = np.arange(N) * 3 % N  # optional column permutation
+# -------------------- 3. Pre-packed bit arrays with random shuffling --------------------
+print("\n=== Routing from pre-packed bit arrays with randomized permutations ===")
+rng = np.random.default_rng(seed=42)  # optional seed
+row_perm = np.arange(N)
+col_perm = np.arange(N)
+rng.shuffle(row_perm)
+rng.shuffle(col_perm)
+
 t0 = time.time()
-S_bits = router.pack_bits(S_np)
-T_bits = router.pack_bits_T_permuted(T_np, col_perm)
+S_bits = router.pack_bits(S_np)                       # rows in original order
+T_bits = router.pack_bits_T_permuted(T_np, col_perm)  # permuted columns
 t1 = time.time()
 print(f"Packing time: {(t1 - t0)*1000:.2f} ms")
 
-stats_bits = router.route_packed_with_stats(S_bits, T_bits, np.arange(N), k, routes_bits)
+stats_bits = router.route_packed_with_stats(S_bits, T_bits, row_perm, k, routes_bits)
 print(f"C++ routing time: {stats_bits['routing_time_ms']:.2f} ms")
 print(f"Total active routes: {stats_bits['active_routes']}")
 print(f"Average per row: {stats_bits['routes_per_row']:.2f}")
 print(f"N: {stats_bits['N']}, k: {stats_bits['k']}")
 
-# -------------------- 4️⃣ Pack-and-route (parallelized) --------------------
+# -------------------- 4. Pack-and-route (parallelized) --------------------
 print("\n=== Pack-and-route from raw matrices (parallelized) ===")
 stats_par = router.pack_and_route(S_np, T_np, k, routes_par)
 print(f"Packing time (C++): {stats_par['packing_time_ms']:.2f} ms")
@@ -112,7 +108,7 @@ print(f"Total active routes: {stats_par['active_routes']}")
 print(f"Average per row: {stats_par['routes_per_row']:.2f}")
 print(f"N: {stats_par['N']}, k: {stats_par['k']}")
 
-# -------------------- 5️⃣ Python preprocessing + pack-and-route --------------------
+# -------------------- 5. Python preprocessing + pack-and-route --------------------
 print("\n=== Python alignment preprocessing + pack-and-route ===")
 routes_py_align = np.zeros((N, k), dtype=np.int32)
 t0 = time.time()
@@ -126,7 +122,7 @@ print(f"Total time (Python align + C++): {(t1 - t0)*1000 + stats_py['total_time_
 print(f"Active routes: {stats_py['active_routes']}")
 print(f"Average per row: {stats_py['routes_per_row']:.2f}")
 
-# -------------------- 6️⃣ Automatic C++ alignment in pack-and-route --------------------
+# -------------------- 6. Automatic C++ alignment in pack-and-route --------------------
 print("\n=== Automatic C++ alignment in pack-and-route (random input) ===")
 routes_cpp_auto = np.zeros((N, k), dtype=np.int32)
 stats_cpp_auto = router.pack_and_route(S_random, T_random, k, routes_cpp_auto)
@@ -136,7 +132,7 @@ print(f"Total time: {stats_cpp_auto['total_time_ms']:.2f} ms")
 print(f"Active routes: {stats_cpp_auto['active_routes']}")
 print(f"Average per row: {stats_cpp_auto['routes_per_row']:.2f}")
 
-# -------------------- 7️⃣ Test C++ alignment functions separately --------------------
+# -------------------- 7. Test C++ alignment functions separately --------------------
 print("\n=== Testing C++ alignment functions ===")
 t0 = time.time()
 S_cpp_aligned = router.left_align_rows(S_random)
@@ -146,13 +142,13 @@ print(f"C++ alignment time: {(t1 - t0)*1000:.2f} ms")
 
 # Verify alignment preserves counts
 print("Verifying alignment preserves row/column sums...")
-for i in range(min(5, N)):  # Check first 5 rows
+for i in range(min(5, N)):
     orig_sum = np.sum(S_random[i])
     align_sum = np.sum(S_cpp_aligned[i])
     if orig_sum != align_sum:
         print(f"Row {i} sum mismatch: {orig_sum} vs {align_sum}")
 
-for j in range(min(5, N)):  # Check first 5 columns
+for j in range(min(5, N)):
     orig_sum = np.sum(T_random[:, j])
     align_sum = np.sum(T_cpp_aligned[:, j])
     if orig_sum != align_sum:

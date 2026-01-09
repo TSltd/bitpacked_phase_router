@@ -1,10 +1,20 @@
 # Bit-Packed Phase Router
 
-## Overview
+## **Overview**
 
-The **Bit-Packed Phase Router** is a high-performance, memory-efficient C++ implementation (with Python bindings) for routing connections between sources and targets in large, dense matrices. It is designed to efficiently handle **dense or sparse connectivity patterns**, making it suitable for applications such as neural network simulations, mixture-of-experts (MoE) routing, and graph connectivity analysis.
+The **Bit-Packed Phase Router** is a **high-performance, memory-efficient C++ library** (with Python bindings) for routing connections between sources and targets in large binary matrices. It is designed to efficiently handle **dense or sparse connectivity patterns**, making it ideal for **neural network simulations, mixture-of-experts (MoE) routing, graph connectivity analysis, and constrained routing tasks**.
 
-The key innovation of this router is **phase separation through deterministic rotations** - by intelligently rotating rows and columns based on cumulative bit sums, it achieves **maximum phase separation** and **minimal concurrency**, ensuring balanced load distribution even in dense matrices. This is combined with **bit-level packing** for simultaneous evaluation of multiple connections with minimal memory overhead.
+The key innovation lies in **phase separation through deterministic rotations combined with full bit-packing**. Each 64-bit word encodes 64 possible connections, allowing routing entirely with **bitwise operations** for minimal memory overhead and maximum speed. **Phase rotations with cumulative offsets** ensure deterministic, balanced routing with minimal concurrency, while **k-limited routing in a single pass** guarantees each source row connects to a fixed number of targets efficiently.
+
+The router supports both raw binary matrices and pre-packed bit arrays. When raw matrices are provided, the pack_and_route interface automatically performs alignment, optional deterministic or randomized shuffling, packing, and routing entirely in C++ for maximum performance. When pre-packed arrays are used, permutations must be supplied explicitly by the caller, enabling full control over routing behavior.
+
+Additional features include:
+
+- **Automatic matrix alignment** for optimal phase separation (left-aligned rows, top-aligned columns).
+- **Parallelized execution with OpenMP** for large matrices (`N ≥ 8192`).
+- **Flexible Python API** supporting raw NumPy arrays, PyTorch tensors, pre-packed bit arrays, or a one-shot `pack_and_route`.
+
+By combining **binary operations, deterministic balancing, and parallelized routing**, the Bit-Packed Phase Router delivers **extremely fast, scalable, and reproducible routing**, outperforming conventional approaches in speed and memory efficiency.
 
 ---
 
@@ -12,9 +22,9 @@ The key innovation of this router is **phase separation through deterministic ro
 
 - **Fully binary representation:** Each 64-bit word encodes 64 possible connections. Routing is done entirely with **bitwise operations**, maximizing speed and minimizing memory usage.
 - **Automatic matrix alignment:** Accepts arbitrary binary matrices and automatically aligns them (left-aligned rows, top-aligned columns) for optimal phase separation.
-- **Deterministic phase rotations:** Rows and columns are rotated using precomputed offsets for spread-out routing.
-- **Column pre-permutation:** Avoids runtime permutation overhead.
-- **Deterministic load balancing:** Cumulative offsets for phase rotations ensure minimized concurrency.
+- **Deterministic phase rotations:** Rows and columns are rotated using inline-computed offsets for spread-out routing.
+- **Deterministic phase separation:** Cumulative bit-count–based offsets distribute routes evenly across phases.
+- **Optional randomized or deterministic shuffling:** Improves saturation and reduces contention, performed inline in C++ or controlled by the user for pre-packed inputs.
 - **k-limited routing:** Each source row can route to at most `k` active targets.
 - **Parallelized with OpenMP:** Exploits multiple CPU threads for large matrices.
 - **Memory-efficient:** Heap allocation for very large matrices (`N > 1024`).
@@ -40,15 +50,17 @@ This combination of **binary operations, deterministic balancing, and paralleliz
 
 1. **Populate:** Random or custom source (`S`) and target (`T`) matrices are generated and stored as bytes.
 2. **Bit-Pack:** Matrices are converted to bit-packed form for high-performance bitwise operations.
-3. **Compute Offsets:** Row and column rotations are determined based on the previous row/column bit sums. This maximizes phase separation, minimizing concurrency.
-4. **Rotate & Permute:** Columns are pre-rotated to minimize runtime computation; source rows are rotated on-the-fly.
+3. **Compute Phase Offsets:**  
+   Row and column rotation offsets are computed inline based on cumulative bit counts of preceding rows and columns. This deterministic process spreads connections across phases, minimizing contention.
+4. **Apply Rotations:**  
+   Source rows are rotated on-the-fly during routing. Target columns may be pre-permuted by the caller (for pre-packed inputs) or implicitly handled during packing for raw matrices.
 5. **Route:** For each source row, the router computes the bitwise AND with each target column, identifying active connections and filling the `routes` array up to `k` targets per source.
 
 ---
 
 ## Advantages
 
-- **High performance:** Bitwise operations and column pre-rotation reduce computation time.
+- **High performance:** Bitwise operations and phase-separated rotations minimize computation time.
 - **Deterministic load balancing:** Phase rotations minimize concurrency.
 - **Scalable:** Can handle matrices up to `N = 8192+` with reasonable memory usage.
 - **Parallel-friendly:** OpenMP allows multi-threaded execution for very large networks.
@@ -115,6 +127,8 @@ print(stats['routing_time_ms'], stats['active_routes'])
 - Optional column permutation to reduce runtime overhead.
 - Returns detailed routing stats.
 
+**Note:** When using pre-packed bit arrays, any desired row or column permutations must be supplied explicitly by the caller. No automatic shuffling is applied in this mode.
+
 ---
 
 ### 3️⃣ One-shot pack-and-route
@@ -132,6 +146,13 @@ print(f"Total time: {stats['total_time_ms']:.2f} ms")
 - Automatically aligns matrices for optimal phase separation.
 - Packs matrices **in parallel** and calls the C++ router.
 - Returns a stats dictionary including alignment, packing, and routing times.
+
+This is the recommended entry point for most users. It automatically:
+
+- Aligns arbitrary binary matrices
+- Applies deterministic phase separation (and optional shuffling)
+- Packs matrices in parallel
+- Executes routing in C++
 
 ---
 
@@ -152,6 +173,8 @@ print(f"Total time: {stats['total_time_ms']:.2f} ms")
 - **Packing is the dominant cost** for large `N`. Automatic alignment adds minimal overhead (~10-20% for large matrices).
 - Routing itself is extremely fast. Performance scales roughly as O(N²) for packing and O(N) for routing.
 
+The following benchmark highlights the impact of automatic C++ alignment and phase separation on both performance and routing saturation.
+
 **For N=8192, k=64 (large matrices):**
 
 | Method                        | Packing (ms) | C++ Routing (ms) | Total (ms) |
@@ -160,18 +183,18 @@ print(f"Total time: {stats['total_time_ms']:.2f} ms")
 | Pre-packed arrays             | 2000–2200    | ~70              | 2070–2290  |
 | Pack-and-route (parallelized) | 2000–2200    | ~70              | 2100–2300  |
 
-**For N=256, k=64 (benchmark results with automatic alignment):**
+**For N=256, k=64 (measured on a laptop CPU):**
 
-| Method                                       | Time (ms) | Active Routes | Avg/Row   |
-| -------------------------------------------- | --------- | ------------- | --------- |
-| Raw NumPy matrices                           | 0.88      | 16364         | 63.92     |
-| PyTorch tensors                              | 14.87     | 16364         | 63.92     |
-| Pre-packed bit arrays                        | 15.51     | 16366         | 63.93     |
-| Pack-and-route (structured input)            | 0.33      | 16364         | 63.92     |
-| Python alignment + pack-and-route            | 22.09     | 16384         | 64.00     |
-| **Automatic C++ alignment + pack-and-route** | **0.25**  | **16384**     | **64.00** |
+| Method                                       | Total Time (ms) | Active Routes | Avg / Row |
+| -------------------------------------------- | --------------- | ------------- | --------- |
+| Raw NumPy matrices                           | ~2.2            | 16352         | 63.88     |
+| PyTorch tensors                              | ~6.8            | 16352         | 63.88     |
+| Pre-packed bit arrays                        | ~0.6            | 16364         | 63.92     |
+| Pack-and-route (structured input)            | ~0.40           | 16352         | 63.88     |
+| Python alignment + pack-and-route            | ~10.4           | 16384         | 64.00     |
+| **Automatic C++ alignment + pack-and-route** | **~0.31**       | **16384**     | **64.00** |
 
-- C++ automatic alignment is **~87x faster** than Python preprocessing while achieving identical routing quality.
+- Automatic C++ alignment achieves **full saturation** while being over **30× faster** than Python preprocessing.
 - OpenMP parallelization provides significant speed-up for packing and routing large matrices.
 
 ---
@@ -180,7 +203,12 @@ print(f"Total time: {stats['total_time_ms']:.2f} ms")
 
 ### Matrix Alignment Options
 
-The Bit-Packed Phase Router works optimally with **aligned matrices** for phase separation, but now **automatically handles arbitrary input matrices**:
+The Bit-Packed Phase Router works optimally with **aligned matrices** for phase separation, but now **automatically handles arbitrary input matrices.**
+
+#### Choosing the Right Entry Point
+
+- Use `pack_and_route` if you have raw matrices and want maximum performance with minimal effort.
+- Use `route_packed` / `route_packed_with_stats` only if you already manage bit-packing and permutations manually.
 
 #### Option 1: Automatic Alignment (Recommended)
 
@@ -339,7 +367,7 @@ The alignment preserves the total number of 1s per row/column, just reorganizes 
 ## Notes
 
 - Heap allocation is required for very large matrices (`N ≥ 1024`).
-- Column pre-permutation and rotation ensure **deterministic and balanced routing**.
+- Phase-separated rotations and optional permutations ensure deterministic and balanced routing.
 - Users can choose raw arrays, pre-packed arrays, or `pack_and_route` depending on workflow needs.
 
 ---

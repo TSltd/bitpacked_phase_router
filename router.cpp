@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <omp.h>
 #include <time.h>
+#include <algorithm>
+#include <random>
 
 namespace py = pybind11;
 
@@ -49,47 +51,45 @@ static void rotate_bits(const uint64_t *src, size_t N, size_t NB_words,
         dst[NB_words - 1] &= (1ULL << rem) - 1;
 }
 
-static void compute_offsets(size_t N, size_t NB_words,
+void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
                             const uint64_t *S_bits,
                             const uint64_t *T_bits,
-                            size_t *row_offsets,
-                            size_t *col_offsets)
+                            const size_t *row_perm,
+                            const size_t *col_perm,
+                            int *routes)
 {
+    // -------------------- Step 1: Compute row/column offsets --------------------
+    std::vector<size_t> row_offsets(N), col_offsets(N);
     row_offsets[0] = col_offsets[0] = 0;
     for (size_t i = 1; i < N; i++)
     {
         size_t rs = 0, cs = 0;
         for (size_t w = 0; w < NB_words; w++)
+        {
             rs += __builtin_popcountll(S_bits[(i - 1) * NB_words + w]);
-        for (size_t w = 0; w < NB_words; w++)
             cs += __builtin_popcountll(T_bits[(i - 1) * NB_words + w]);
+        }
         row_offsets[i] = rs % N;
         col_offsets[i] = cs % N;
     }
-}
 
-void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
-                            const uint64_t *S_bits,
-                            const uint64_t *T_bits,
-                            const size_t *row_perm,
-                            int *routes)
-{
-    std::vector<size_t> row_offsets(N), col_offsets(N);
-    compute_offsets(N, NB_words, S_bits, T_bits,
-                    row_offsets.data(), col_offsets.data());
-
+    // -------------------- Step 2: Pre-rotate columns --------------------
     std::vector<uint64_t> T_rot(N * NB_words);
 
 #pragma omp parallel for
     for (size_t j = 0; j < N; j++)
-        rotate_bits(&T_bits[j * NB_words], N, NB_words,
-                    col_offsets[j], &T_rot[j * NB_words]);
+    {
+        size_t pj = col_perm[j]; // shuffled column index
+        rotate_bits(&T_bits[pj * NB_words], N, NB_words,
+                    col_offsets[pj], &T_rot[j * NB_words]);
+    }
 
+    // -------------------- Step 3: Route each source row --------------------
 #pragma omp parallel for
     for (size_t i = 0; i < N; i++)
     {
         uint64_t row[NB(N)];
-        size_t pi = row_perm[i];
+        size_t pi = row_perm[i]; // shuffled row index
         rotate_bits(&S_bits[pi * NB_words], N, NB_words, row_offsets[pi], row);
 
         size_t cnt = 0;
@@ -107,6 +107,8 @@ void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
                 }
             }
         }
+
+        // Fill remaining slots with -1
         for (; cnt < k; cnt++)
             routes[i * k + cnt] = -1;
     }
@@ -160,6 +162,37 @@ py::array_t<uint8_t> top_align_columns(py::array_t<uint8_t> T_np)
     }
 
     return T_aligned_np;
+}
+
+// ============================
+// Generate Random Permutations
+// ============================
+
+void generate_random_perms(size_t N, size_t *row_perm, size_t *col_perm)
+{
+    // Initialize identity permutations
+    for (size_t i = 0; i < N; i++)
+    {
+        row_perm[i] = i;
+        col_perm[i] = i;
+    }
+
+    // Random generator (thread-safe if used in a single thread)
+    unsigned int seed = (unsigned int)time(nullptr);
+
+    // Fisher-Yates shuffle for rows
+    for (size_t i = N - 1; i > 0; i--)
+    {
+        size_t j = rand_r(&seed) % (i + 1);
+        std::swap(row_perm[i], row_perm[j]);
+    }
+
+    // Fisher-Yates shuffle for columns
+    for (size_t i = N - 1; i > 0; i--)
+    {
+        size_t j = rand_r(&seed) % (i + 1);
+        std::swap(col_perm[i], col_perm[j]);
+    }
 }
 
 /* =========================
@@ -233,6 +266,11 @@ void route_packed(py::array_t<uint64_t> S_bits_np,
                   size_t k,
                   py::array_t<int> routes_np)
 {
+    size_t N = S_bits_np.shape(0);
+    std::vector<size_t> col_perm(N);
+    for (size_t i = 0; i < N; i++)
+        col_perm[i] = i; // identity
+
     int *r = (int *)routes_np.mutable_data();
     phase_router_bitpacked(
         S_bits_np.shape(0),
@@ -241,6 +279,7 @@ void route_packed(py::array_t<uint64_t> S_bits_np,
         (uint64_t *)S_bits_np.data(),
         (uint64_t *)T_bits_np.data(),
         (size_t *)row_perm_np.data(),
+        col_perm.data(),
         r);
 }
 
@@ -250,6 +289,11 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
                                  size_t k,
                                  py::array_t<int> routes_np)
 {
+    size_t N = S_bits_np.shape(0);
+    std::vector<size_t> col_perm(N);
+    for (size_t i = 0; i < N; i++)
+        col_perm[i] = i; // identity
+
     double t0 = now_ms();
     int *r = (int *)routes_np.mutable_data();
 
@@ -260,6 +304,7 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
         (uint64_t *)S_bits_np.data(),
         (uint64_t *)T_bits_np.data(),
         (size_t *)row_perm_np.data(),
+        col_perm.data(),
         r);
     double t1 = now_ms();
 
@@ -324,15 +369,15 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
             T_bits[j * NB_words + w] = word;
         }
 
-    // Identity row permutation
-    std::vector<size_t> row_perm(N);
+    // Identity row and column permutations
+    std::vector<size_t> row_perm(N), col_perm(N);
     for (size_t i = 0; i < N; i++)
-        row_perm[i] = i;
+        row_perm[i] = col_perm[i] = i;
 
     // Call the internal packed router
     phase_router_bitpacked(N, k, NB_words,
                            S_bits.data(), T_bits.data(),
-                           row_perm.data(), routes);
+                           row_perm.data(), col_perm.data(), routes);
 }
 
 py::dict pack_and_route(py::array_t<uint8_t> S_np,
@@ -343,7 +388,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
     size_t N = S_np.shape(0);
     size_t NB_words = NB(N);
 
-    // Align matrices for proper phase separation
+    // -------------------- Step 1: Automatic alignment --------------------
     py::array_t<uint8_t> S_aligned = left_align_rows(S_np);
     py::array_t<uint8_t> T_aligned = top_align_columns(T_np);
 
@@ -356,7 +401,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
     double t0_pack = now_ms();
 
-// -------------------- Pack rows in parallel --------------------
+    // -------------------- Step 2: Pack rows --------------------
 #pragma omp parallel for
     for (size_t i = 0; i < N; i++)
     {
@@ -373,7 +418,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
         }
     }
 
-// -------------------- Pack columns in parallel --------------------
+    // -------------------- Step 3: Pack columns --------------------
 #pragma omp parallel for
     for (size_t j = 0; j < N; j++)
     {
@@ -392,21 +437,36 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
     double t1_pack = now_ms();
 
-    // -------------------- Identity row permutation --------------------
-    std::vector<size_t> row_perm(N);
+    // -------------------- Step 4: Generate randomized row/column permutations --------------------
+    std::vector<size_t> row_perm(N), col_perm(N);
     for (size_t i = 0; i < N; i++)
-        row_perm[i] = i;
+        row_perm[i] = col_perm[i] = i;
 
-    // -------------------- Bit-packed routing --------------------
+    unsigned int seed = (unsigned int)time(nullptr);
+    // Shuffle rows
+    for (size_t i = N - 1; i > 0; i--)
+    {
+        size_t j = rand_r(&seed) % (i + 1);
+        std::swap(row_perm[i], row_perm[j]);
+    }
+    // Shuffle columns
+    for (size_t i = N - 1; i > 0; i--)
+    {
+        size_t j = rand_r(&seed) % (i + 1);
+        std::swap(col_perm[i], col_perm[j]);
+    }
+
+    // -------------------- Step 5: Bit-packed routing with shuffled rows/columns --------------------
     double t0_route = now_ms();
 
     phase_router_bitpacked(N, k, NB_words,
                            S_bits.data(), T_bits.data(),
-                           row_perm.data(), routes);
+                           row_perm.data(), col_perm.data(), // <-- pass both permutations
+                           routes);
 
     double t1_route = now_ms();
 
-    // -------------------- Compute statistics --------------------
+    // -------------------- Step 6: Compute statistics --------------------
     size_t active = 0;
     for (size_t i = 0; i < N * k; i++)
         active += (routes[i] != -1);
