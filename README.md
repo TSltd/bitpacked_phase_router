@@ -4,7 +4,7 @@
 
 The **Bit-Packed Phase Router** is a high-performance, memory-efficient C++ implementation (with Python bindings) for routing connections between sources and targets in large, dense matrices. It is designed to efficiently handle **dense or sparse connectivity patterns**, making it suitable for applications such as neural network simulations, mixture-of-experts (MoE) routing, and graph connectivity analysis.
 
-The key feature of this router is **bit-level packing** of matrices combined with **row/column rotations and permutations**, allowing the simultaneous evaluation of multiple connections with minimal memory overhead.
+The key innovation of this router is **phase separation through deterministic rotations** - by intelligently rotating rows and columns based on cumulative bit sums, it achieves **maximum phase separation** and **minimal concurrency**, ensuring balanced load distribution even in dense matrices. This is combined with **bit-level packing** for simultaneous evaluation of multiple connections with minimal memory overhead.
 
 ---
 
