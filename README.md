@@ -170,32 +170,61 @@ This is the recommended entry point for most users. It automatically:
 
 ## Performance Notes
 
-- **Packing is the dominant cost** for large `N`. Automatic alignment adds minimal overhead (~10-20% for large matrices).
-- Routing itself is extremely fast. Performance scales roughly as O(N²) for packing and O(N) for routing.
+- **Packing dominates runtime** for large `N`. Routing itself is extremely fast once data are bit-packed.
+- Overall complexity scales as **O(N²)** for packing/alignment and **O(N)** for routing.
+- Automatic C++ alignment preserves full routing saturation while avoiding costly Python preprocessing.
 
-The following benchmark highlights the impact of automatic C++ alignment and phase separation on both performance and routing saturation.
+The benchmarks below illustrate how different entry points trade off flexibility, preprocessing cost, and end-to-end performance.
 
-**For N=8192, k=64 (large matrices):**
+---
 
-| Method                        | Packing (ms) | C++ Routing (ms) | Total (ms) |
-| ----------------------------- | ------------ | ---------------- | ---------- |
-| Raw NumPy / PyTorch           | –            | ~1700            | ~1700      |
-| Pre-packed arrays             | 2000–2200    | ~70              | 2070–2290  |
-| Pack-and-route (parallelized) | 2000–2200    | ~70              | 2100–2300  |
+### Large-scale benchmark: **N = 8192, k = 64**
 
-**For N=256, k=64 (measured on a laptop CPU):**
+| Method                                       | Packing / Align (ms) | C++ Routing (ms) | Total Time (ms) | Active Routes | Avg / Row |
+| -------------------------------------------- | -------------------- | ---------------- | --------------- | ------------- | --------- |
+| Raw NumPy matrices                           | –                    | 653.01           | 653.01          | 524,288       | 64.00     |
+| PyTorch tensors                              | –                    | 486.09           | 486.09          | 524,288       | 64.00     |
+| Pre-packed bit arrays (manual permutations)  | 405.08               | 64.89            | 469.97          | 524,288       | 64.00     |
+| Pack-and-route (structured input)            | 513.11               | 51.12            | 564.53          | 524,288       | 64.00     |
+| Python alignment + pack-and-route            | 2286.25              | 569.04\*         | 2855.60         | 524,288       | 64.00     |
+| **Automatic C++ alignment + pack-and-route** | **731.05**           | **62.67**        | **794.11**      | **524,288**   | **64.00** |
+
+- Includes Python alignment + C++ packing + routing.
+
+**Observations**
+
+- Once packed, routing completes in **~50–65 ms**, even at `N = 8192`.
+- Python-side preprocessing dominates runtime and should be avoided for large matrices.
+- Automatic C++ alignment is **~3.6× faster** than Python alignment while achieving identical saturation.
+
+---
+
+### Small-scale benchmark: **N = 256, k = 64**
 
 | Method                                       | Total Time (ms) | Active Routes | Avg / Row |
 | -------------------------------------------- | --------------- | ------------- | --------- |
-| Raw NumPy matrices                           | ~2.2            | 16352         | 63.88     |
-| PyTorch tensors                              | ~6.8            | 16352         | 63.88     |
-| Pre-packed bit arrays                        | ~0.6            | 16364         | 63.92     |
-| Pack-and-route (structured input)            | ~0.40           | 16352         | 63.88     |
-| Python alignment + pack-and-route            | ~10.4           | 16384         | 64.00     |
-| **Automatic C++ alignment + pack-and-route** | **~0.31**       | **16384**     | **64.00** |
+| Raw NumPy matrices                           | ~2.2            | 16,352        | 63.88     |
+| PyTorch tensors                              | ~6.8            | 16,352        | 63.88     |
+| Pre-packed bit arrays                        | ~0.6            | 16,364        | 63.92     |
+| Pack-and-route (structured input)            | ~0.40           | 16,352        | 63.88     |
+| Python alignment + pack-and-route            | ~10.4           | 16,384        | 64.00     |
+| **Automatic C++ alignment + pack-and-route** | **~0.31**       | **16,384**    | **64.00** |
 
-- Automatic C++ alignment achieves **full saturation** while being over **30× faster** than Python preprocessing.
-- OpenMP parallelization provides significant speed-up for packing and routing large matrices.
+**Observations**
+
+- At small `N`, overhead dominates, but trends remain consistent.
+- Automatic C++ alignment achieves **full saturation** while remaining over **30× faster** than Python preprocessing.
+- Pre-packed inputs are fastest when permutations are managed explicitly by the user.
+
+---
+
+### Summary
+
+- **Fastest routing:** Pre-packed bit arrays with user-controlled permutations
+- **Best general-purpose API:** `pack_and_route` with automatic C++ alignment
+- **Avoid for large N:** Python-side alignment or per-element Python routing
+
+Automatic alignment and bit-packed routing allow the system to scale efficiently to large problem sizes while maintaining deterministic, fully saturated routing.
 
 ---
 

@@ -25,7 +25,7 @@ def left_top_align(S, T):
     return S_aligned, T_aligned
 
 # -------------------- Configuration --------------------
-N = 256   # rows/columns
+N = 8192   # rows/columns
 k = 64     # targets per source
 
 # -------------------- Generate random binary matrices --------------------
