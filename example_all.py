@@ -3,22 +3,55 @@ import torch
 import router
 import time
 
+def left_top_align(S, T):
+    """
+    Transform arbitrary binary matrices into left-aligned rows (S)
+    and top-aligned columns (T) for proper phase-separated routing.
+
+    Parameters:
+        S: (N, N) uint8 source matrix
+        T: (N, N) uint8 target matrix
+    Returns:
+        S_aligned, T_aligned
+    """
+    N = S.shape[0]
+
+    # Left-align each row in S
+    S_aligned = np.zeros_like(S)
+    for i in range(N):
+        ones_count = np.sum(S[i])
+        S_aligned[i, :ones_count] = 1
+
+    # Top-align each column in T
+    T_aligned = np.zeros_like(T)
+    for j in range(N):
+        ones_count = np.sum(T[:, j])
+        T_aligned[:ones_count, j] = 1
+
+    return S_aligned, T_aligned
+
 # -------------------- Configuration --------------------
-N = 8192   # rows/columns
+N = 256   # rows/columns
 k = 64     # targets per source
 
-# -------------------- Generate structured binary matrices --------------------
-print(f"Generating structured binary matrices N={N}, k={k}...")
+# -------------------- Generate random binary matrices --------------------
+print(f"Generating random binary matrices N={N}, k={k}...")
 
-# Source: left-aligned rows
+# Random source matrix (unaligned)
+S_random = np.random.randint(0, 2, (N, N), dtype=np.uint8)
+
+# Random target matrix (unaligned)
+T_random = np.random.randint(0, 2, (N, N), dtype=np.uint8)
+
+# For backward compatibility, also create structured aligned matrices
+print("Generating structured aligned matrices for comparison...")
 S_np = np.zeros((N, N), dtype=np.uint8)
-row_counts = np.random.randint(1, k+1, size=N)  # 1..k active entries per row
+row_counts = np.random.randint(1, k+1, size=N)
 for i, count in enumerate(row_counts):
     S_np[i, :count] = 1
 
-# Target: top-aligned columns
 T_np = np.zeros((N, N), dtype=np.uint8)
-col_counts = np.random.randint(1, k+1, size=N)  # 1..k active entries per column
+col_counts = np.random.randint(1, k+1, size=N)
 for j, count in enumerate(col_counts):
     T_np[:count, j] = 1
 
@@ -78,3 +111,51 @@ print(f"Total time: {stats_par['total_time_ms']:.2f} ms")
 print(f"Total active routes: {stats_par['active_routes']}")
 print(f"Average per row: {stats_par['routes_per_row']:.2f}")
 print(f"N: {stats_par['N']}, k: {stats_par['k']}")
+
+# -------------------- 5️⃣ Python preprocessing + pack-and-route --------------------
+print("\n=== Python alignment preprocessing + pack-and-route ===")
+routes_py_align = np.zeros((N, k), dtype=np.int32)
+t0 = time.time()
+S_py_aligned, T_py_aligned = left_top_align(S_random, T_random)
+t1 = time.time()
+print(f"Python alignment time: {(t1 - t0)*1000:.2f} ms")
+stats_py = router.pack_and_route(S_py_aligned, T_py_aligned, k, routes_py_align)
+print(f"C++ packing time: {stats_py['packing_time_ms']:.2f} ms")
+print(f"C++ routing time: {stats_py['routing_time_ms']:.2f} ms")
+print(f"Total time (Python align + C++): {(t1 - t0)*1000 + stats_py['total_time_ms']:.2f} ms")
+print(f"Active routes: {stats_py['active_routes']}")
+print(f"Average per row: {stats_py['routes_per_row']:.2f}")
+
+# -------------------- 6️⃣ Automatic C++ alignment in pack-and-route --------------------
+print("\n=== Automatic C++ alignment in pack-and-route (random input) ===")
+routes_cpp_auto = np.zeros((N, k), dtype=np.int32)
+stats_cpp_auto = router.pack_and_route(S_random, T_random, k, routes_cpp_auto)
+print(f"C++ alignment + packing time: {stats_cpp_auto['packing_time_ms']:.2f} ms")
+print(f"C++ routing time: {stats_cpp_auto['routing_time_ms']:.2f} ms")
+print(f"Total time: {stats_cpp_auto['total_time_ms']:.2f} ms")
+print(f"Active routes: {stats_cpp_auto['active_routes']}")
+print(f"Average per row: {stats_cpp_auto['routes_per_row']:.2f}")
+
+# -------------------- 7️⃣ Test C++ alignment functions separately --------------------
+print("\n=== Testing C++ alignment functions ===")
+t0 = time.time()
+S_cpp_aligned = router.left_align_rows(S_random)
+T_cpp_aligned = router.top_align_columns(T_random)
+t1 = time.time()
+print(f"C++ alignment time: {(t1 - t0)*1000:.2f} ms")
+
+# Verify alignment preserves counts
+print("Verifying alignment preserves row/column sums...")
+for i in range(min(5, N)):  # Check first 5 rows
+    orig_sum = np.sum(S_random[i])
+    align_sum = np.sum(S_cpp_aligned[i])
+    if orig_sum != align_sum:
+        print(f"Row {i} sum mismatch: {orig_sum} vs {align_sum}")
+
+for j in range(min(5, N)):  # Check first 5 columns
+    orig_sum = np.sum(T_random[:, j])
+    align_sum = np.sum(T_cpp_aligned[:, j])
+    if orig_sum != align_sum:
+        print(f"Column {j} sum mismatch: {orig_sum} vs {align_sum}")
+
+print("Alignment verification complete.")

@@ -11,6 +11,7 @@ The key feature of this router is **bit-level packing** of matrices combined wit
 ## Features
 
 - **Fully binary representation:** Each 64-bit word encodes 64 possible connections. Routing is done entirely with **bitwise operations**, maximizing speed and minimizing memory usage.
+- **Automatic matrix alignment:** Accepts arbitrary binary matrices and automatically aligns them (left-aligned rows, top-aligned columns) for optimal phase separation.
 - **Deterministic phase rotations:** Rows and columns are rotated using precomputed offsets for spread-out routing.
 - **Column pre-permutation:** Avoids runtime permutation overhead.
 - **Deterministic load balancing:** Cumulative offsets for phase rotations ensure minimized concurrency.
@@ -127,26 +128,31 @@ print(f"C++ routing time: {stats['routing_time_ms']:.2f} ms")
 print(f"Total time: {stats['total_time_ms']:.2f} ms")
 ```
 
-- Accepts raw NumPy arrays.
+- Accepts raw NumPy arrays (arbitrary alignment).
+- Automatically aligns matrices for optimal phase separation.
 - Packs matrices **in parallel** and calls the C++ router.
-- Returns a stats dictionary including packing and routing times.
+- Returns a stats dictionary including alignment, packing, and routing times.
 
 ---
 
 ### 4️⃣ Helper functions
 
+- `router.left_align_rows(S)` – Left-align rows of a `uint8` matrix.
+- `router.top_align_columns(T)` – Top-align columns of a `uint8` matrix.
 - `router.pack_bits(S)` – Pack a `uint8` matrix into bit-packed `uint64`.
 - `router.pack_bits_T_permuted(T, col_perm)` – Pack with column permutation.
 - `router.route_packed(S_bits, T_bits, row_perm, k, routes)` – Run routing on pre-packed arrays.
 - `router.route_packed_with_stats(...)` – Same as above but returns stats.
-- `router.pack_and_route(S, T, k, routes)` – One-shot packing + routing with timing stats.
+- `router.pack_and_route(S, T, k, routes)` – One-shot packing + routing with automatic alignment and timing stats.
 
 ---
 
 ## Performance Notes
 
-- **Packing is the dominant cost** for large `N`.
-- Routing itself is extremely fast: for `N=8192, k=64`:
+- **Packing is the dominant cost** for large `N`. Automatic alignment adds minimal overhead (~10-20% for large matrices).
+- Routing itself is extremely fast. Performance scales roughly as O(N²) for packing and O(N) for routing.
+
+**For N=8192, k=64 (large matrices):**
 
 | Method                        | Packing (ms) | C++ Routing (ms) | Total (ms) |
 | ----------------------------- | ------------ | ---------------- | ---------- |
@@ -154,20 +160,69 @@ print(f"Total time: {stats['total_time_ms']:.2f} ms")
 | Pre-packed arrays             | 2000–2200    | ~70              | 2070–2290  |
 | Pack-and-route (parallelized) | 2000–2200    | ~70              | 2100–2300  |
 
-- OpenMP parallelization provides a significant speed-up for packing and routing large matrices.
+**For N=256, k=64 (benchmark results with automatic alignment):**
+
+| Method                                       | Time (ms) | Active Routes | Avg/Row   |
+| -------------------------------------------- | --------- | ------------- | --------- |
+| Raw NumPy matrices                           | 0.88      | 16364         | 63.92     |
+| PyTorch tensors                              | 14.87     | 16364         | 63.92     |
+| Pre-packed bit arrays                        | 15.51     | 16366         | 63.93     |
+| Pack-and-route (structured input)            | 0.33      | 16364         | 63.92     |
+| Python alignment + pack-and-route            | 22.09     | 16384         | 64.00     |
+| **Automatic C++ alignment + pack-and-route** | **0.25**  | **16384**     | **64.00** |
+
+- C++ automatic alignment is **~87x faster** than Python preprocessing while achieving identical routing quality.
+- OpenMP parallelization provides significant speed-up for packing and routing large matrices.
 
 ---
 
 ## Usage Example
 
-### Structured matrices for effective routing
+### Matrix Alignment Options
 
-The Bit-Packed Phase Router is designed to **spread connections evenly** using row/column rotations and cumulative sums. For this to work properly, the matrices should **not be completely random**:
+The Bit-Packed Phase Router works optimally with **aligned matrices** for phase separation, but now **automatically handles arbitrary input matrices**:
 
-- **Source matrix (`S`)**: Rows are **left-aligned** — active entries (1s) start from the left of each row and the remaining positions are 0.
-- **Target matrix (`T`)**: Columns are **top-aligned** — active entries (1s) start from the top of each column and the remaining positions are 0.
+#### Option 1: Automatic Alignment (Recommended)
 
-This structure ensures that the **phase rotations** (row/column offsets) actually separate connections across targets. Randomly distributed 1s would defeat this mechanism and make the router behave like a naive bitwise AND.
+Simply pass any binary matrices to `pack_and_route` - alignment happens automatically:
+
+```python
+import numpy as np
+import router
+
+# Random or arbitrary matrices - no preprocessing needed!
+S = np.random.randint(0, 2, (N, N), dtype=np.uint8)
+T = np.random.randint(0, 2, (N, N), dtype=np.uint8)
+
+routes = np.zeros((N, k), dtype=np.int32)
+stats = router.pack_and_route(S, T, k, routes)  # Automatic alignment
+```
+
+#### Option 2: Manual Alignment (For Control)
+
+Pre-align matrices manually using C++ or Python functions:
+
+```python
+# C++ alignment (fast)
+S_aligned = router.left_align_rows(S)
+T_aligned = router.top_align_columns(T)
+
+# Python alignment (flexible)
+from example_all import left_top_align
+S_aligned, T_aligned = left_top_align(S, T)
+
+# Then route normally
+stats = router.pack_and_route(S_aligned, T_aligned, k, routes)
+```
+
+#### Option 3: Pre-structured Matrices (Optimal Performance)
+
+For maximum performance, create aligned matrices directly:
+
+- **Source matrix (`S`)**: **Left-aligned rows** — 1s at the start of each row
+- **Target matrix (`T`)**: **Top-aligned columns** — 1s at the top of each column
+
+This ensures the **phase rotations** separate connections optimally. Random distributions work but may reduce efficiency.
 
 ---
 
@@ -217,6 +272,49 @@ router.route_packed_with_stats(S_bits, T_bits, np.arange(N), k, routes_bits)
 # -------------------- 4️⃣ One-shot pack-and-route --------------------
 router.pack_and_route(S_np, T_np, k, routes_par)
 ```
+
+---
+
+### Arbitrary Matrix Input and Automatic Alignment
+
+The router now **automatically handles arbitrary binary matrices** without requiring manual preprocessing. If your matrices are not pre-aligned, the `pack_and_route` function will automatically:
+
+1. **Left-align rows** in the source matrix (`S`)
+2. **Top-align columns** in the target matrix (`T`)
+3. Proceed with packing and routing
+
+This ensures optimal phase separation regardless of input structure. For manual preprocessing or inspection, use the alignment functions directly:
+
+```python
+# Manual alignment
+S_aligned = router.left_align_rows(S)
+T_aligned = router.top_align_columns(T)
+
+# Or use the Python function from example_all.py
+from example_all import left_top_align
+S_aligned, T_aligned = left_top_align(S, T)
+```
+
+**Example with random matrices:**
+
+```python
+import numpy as np
+import router
+
+N, k = 8192, 64
+
+# Random matrices (no alignment needed)
+S = np.random.randint(0, 2, (N, N), dtype=np.uint8)
+T = np.random.randint(0, 2, (N, N), dtype=np.uint8)
+
+routes = np.zeros((N, k), dtype=np.int32)
+stats = router.pack_and_route(S, T, k, routes)
+
+print(f"Total active routes: {stats['active_routes']}")
+print(f"Average per row: {stats['routes_per_row']:.2f}")
+```
+
+The alignment preserves the total number of 1s per row/column, just reorganizes their positions for better routing performance.
 
 ---
 

@@ -113,6 +113,56 @@ void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
 }
 
 /* =========================
+   Alignment functions
+   ========================= */
+
+py::array_t<uint8_t> left_align_rows(py::array_t<uint8_t> S_np)
+{
+    auto S = S_np.unchecked<2>();
+    size_t N = S.shape(0);
+
+    py::array_t<uint8_t> S_aligned_np({N, N});
+    uint8_t *S_aligned = (uint8_t *)S_aligned_np.mutable_data();
+
+#pragma omp parallel for
+    for (size_t i = 0; i < N; i++)
+    {
+        size_t ones_count = 0;
+        for (size_t j = 0; j < N; j++)
+            ones_count += S(i, j);
+        for (size_t j = 0; j < ones_count; j++)
+            S_aligned[i * N + j] = 1;
+        for (size_t j = ones_count; j < N; j++)
+            S_aligned[i * N + j] = 0;
+    }
+
+    return S_aligned_np;
+}
+
+py::array_t<uint8_t> top_align_columns(py::array_t<uint8_t> T_np)
+{
+    auto T = T_np.unchecked<2>();
+    size_t N = T.shape(0);
+
+    py::array_t<uint8_t> T_aligned_np({N, N});
+    uint8_t *T_aligned = (uint8_t *)T_aligned_np.mutable_data();
+
+#pragma omp parallel for
+    for (size_t j = 0; j < N; j++)
+    {
+        size_t ones_count = 0;
+        for (size_t i = 0; i < N; i++)
+            ones_count += T(i, j);
+        for (size_t i = 0; i < ones_count; i++)
+            T_aligned[i * N + j] = 1;
+        for (size_t i = ones_count; i < N; i++)
+            T_aligned[i * N + j] = 0;
+    }
+
+    return T_aligned_np;
+}
+
+/* =========================
    Packing functions
    ========================= */
 
@@ -293,8 +343,12 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
     size_t N = S_np.shape(0);
     size_t NB_words = NB(N);
 
-    const uint8_t *S_data = S_np.data();
-    const uint8_t *T_data = T_np.data();
+    // Align matrices for proper phase separation
+    py::array_t<uint8_t> S_aligned = left_align_rows(S_np);
+    py::array_t<uint8_t> T_aligned = top_align_columns(T_np);
+
+    const uint8_t *S_data = (const uint8_t *)S_aligned.data();
+    const uint8_t *T_data = (const uint8_t *)T_aligned.data();
     int *routes = routes_np.mutable_data();
 
     std::vector<uint64_t> S_bits(N * NB_words);
@@ -375,6 +429,9 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
 PYBIND11_MODULE(router, m)
 {
+    m.def("left_align_rows", &left_align_rows, "Left-align rows of a uint8 matrix");
+    m.def("top_align_columns", &top_align_columns, "Top-align columns of a uint8 matrix");
+
     m.def("pack_bits", &pack_bits, "Pack a uint8 matrix into bit-packed uint64 array");
     m.def("pack_bits_T_permuted", &pack_bits_T_permuted,
           "Pack a uint8 matrix into bit-packed uint64 array with column permutation",
@@ -388,7 +445,7 @@ PYBIND11_MODULE(router, m)
           py::arg("S"), py::arg("T"), py::arg("k"), py::arg("routes"));
 
     m.def("pack_and_route", &pack_and_route,
-          "Pack raw 0/1 matrices and run bit-packed router in one call",
+          "Pack raw 0/1 matrices and run bit-packed router in one call (with automatic alignment)",
           py::arg("S"), py::arg("T"), py::arg("k"), py::arg("routes"));
 
     m.doc() = "Bit-packed phase router for Python / PyTorch";
