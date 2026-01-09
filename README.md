@@ -417,3 +417,7 @@ A Discrete Approach to Approximate Doubly Stochastic Transformations](docs/Phase
 D. Shirley, 2026
 
 The codebase extends the original formulation with full bit-packing, deterministic phase rotations, and a production-ready C++ / Python implementation.
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
