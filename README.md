@@ -8,6 +8,8 @@ The key innovation lies in **phase separation through deterministic rotations co
 
 The router supports both raw binary matrices and pre-packed bit arrays. When raw matrices are provided, the pack_and_route interface automatically performs alignment, optional deterministic or randomized shuffling, packing, and routing entirely in C++ for maximum performance. When pre-packed arrays are used, permutations must be supplied explicitly by the caller, enabling full control over routing behavior.
 
+The router is **CPU-first by design**, leveraging fast bitwise operations, cache-efficient memory access, and early termination, making it well-suited for CPU-only and embedded systems (see [Why CPU?](docs/why_cpu.md)).
+
 Additional features include:
 
 - **Automatic matrix alignment** for optimal phase separation (left-aligned rows, top-aligned columns).
@@ -400,3 +402,14 @@ The alignment preserves the total number of 1s per row/column, just reorganizes 
 - Users can choose raw arrays, pre-packed arrays, or `pack_and_route` depending on workflow needs.
 
 ---
+
+## Reference
+
+This implementation is based on the ideas introduced in:
+
+[Phase-Separated Binary Coupling Matrices via Barrel-Shifting:
+A Discrete Approach to Approximate Doubly Stochastic Transformations](docs/Phase-Separated_Binary_Coupling_Matrices.pdf)
+
+D. Shirley, 2026
+
+The codebase extends the original formulation with full bit-packing, deterministic phase rotations, and a production-ready C++ / Python implementation.
