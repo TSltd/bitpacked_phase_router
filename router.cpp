@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 199309L
+
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <vector>
@@ -12,11 +13,17 @@
 #include <cstring>
 #include <fstream> // for std::ofstream
 #include <string>  // for std::string
+#include <filesystem>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 #define ROUTER_ENABLE_DUMP 1
 #define ROUTER_DUMP_INTERMEDIATE 1
 
 namespace py = pybind11;
+
+namespace fs = std::filesystem;
 
 #define WORD_BITS 64
 #define NB(N) (((N) + WORD_BITS - 1) / WORD_BITS)
@@ -74,184 +81,44 @@ static void permute_columns_bits(const uint64_t *src,
                                  size_t N,
                                  size_t NB_words)
 {
-    // ✅ clears entire destination row
     std::memset(dst, 0, NB_words * sizeof(uint64_t));
 
-    // iterate over DESTINATION columns
     for (size_t j = 0; j < N; j++)
     {
-        // src column index for this destination column
         size_t src_j = col_perm[j];
 
-        // locate source bit
         size_t src_w = src_j / WORD_BITS;
         size_t src_b = src_j % WORD_BITS;
 
-        // test bit
         if (src[src_w] & (1ULL << src_b))
         {
-            // locate destination bit
             size_t dst_w = j / WORD_BITS;
             size_t dst_b = j % WORD_BITS;
-
-            // set destination bit
             dst[dst_w] |= 1ULL << dst_b;
         }
     }
 }
 
-/* void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
-                            const uint64_t *S_bits,
-                            const uint64_t *T_bits,
-                            const size_t *col_perm,
-                            int *routes,
-                            const char *debug_prefix = nullptr)
-{
-    // -------------------- Step 1: Compute cumulative row offsets --------------------
-    std::vector<size_t> row_offsets(N, 0);
-    for (size_t i = 1; i < N; i++)
-    {
-        size_t rs = 0;
-        for (size_t w = 0; w < NB_words; w++)
-            rs += __builtin_popcountll(S_bits[(i - 1) * NB_words + w]);
-        row_offsets[i] = (row_offsets[i - 1] + rs) % N;
-    }
-
-    // -------------------- Step 2: Rotate rows of S and T --------------------
-    std::vector<uint64_t> S_rot(N * NB_words);
-    std::vector<uint64_t> T_rot(N * NB_words);
-
-#pragma omp parallel for
-    for (size_t i = 0; i < N; i++)
-    {
-        rotate_bits_full(&S_bits[i * NB_words], N, NB_words, row_offsets[i], &S_rot[i * NB_words]);
-        rotate_bits_full(&T_bits[i * NB_words], N, NB_words, row_offsets[i], &T_rot[i * NB_words]);
-    }
-
-    // -------------------- Step 3: Apply COLUMN shuffling --------------------
-    std::vector<uint64_t> S_shuf(N * NB_words);
-    std::vector<uint64_t> T_shuf(N * NB_words);
-
-#pragma omp parallel for
-    for (size_t i = 0; i < N; i++)
-    {
-        permute_columns_bits(
-            &S_rot[i * NB_words],
-            &S_shuf[i * NB_words],
-            col_perm,
-            N,
-            NB_words);
-
-        permute_columns_bits(
-            &T_rot[i * NB_words],
-            &T_shuf[i * NB_words],
-            col_perm,
-            N,
-            NB_words);
-    }
-
-    // -------------------- Step 4: Rotate T 90° clockwise (optimized) --------------------
-    std::vector<uint64_t> T_final(N * NB_words, 0);
-
-// First: transpose T_shuf (bitwise)
-#pragma omp parallel for
-    for (size_t i = 0; i < N; i++)
-    {
-        for (size_t j = 0; j < N; j++)
-        {
-            size_t src_word = j / WORD_BITS;
-            size_t src_bit = j % WORD_BITS;
-            uint64_t bit = (T_shuf[i * NB_words + src_word] >> src_bit) & 1ULL;
-
-            size_t dst_i = j;
-            size_t dst_j = i;
-            size_t dst_word = dst_j / WORD_BITS;
-            size_t dst_bit = dst_j % WORD_BITS;
-
-            if (bit)
-                T_final[dst_i * NB_words + dst_word] |= 1ULL << dst_bit;
-        }
-    }
-
-// Second: reverse each row for clockwise rotation
-#pragma omp parallel for
-    for (size_t i = 0; i < N; i++)
-    {
-        for (size_t w = 0; w < NB_words; w++)
-        {
-            uint64_t x = T_final[i * NB_words + w];
-            // reverse bits in 64-bit word
-            x = ((x & 0x5555555555555555ULL) << 1) | ((x >> 1) & 0x5555555555555555ULL);
-            x = ((x & 0x3333333333333333ULL) << 2) | ((x >> 2) & 0x3333333333333333ULL);
-            x = ((x & 0x0F0F0F0F0F0F0F0FULL) << 4) | ((x >> 4) & 0x0F0F0F0F0F0F0F0FULL);
-            x = ((x & 0x00FF00FF00FF00FFULL) << 8) | ((x >> 8) & 0x00FF00FF00FF00FFULL);
-            x = ((x & 0x0000FFFF0000FFFFULL) << 16) | ((x >> 16) & 0x0000FFFF0000FFFFULL);
-            x = (x << 32) | (x >> 32);
-            T_final[i * NB_words + w] = x;
-        }
-
-        // If N is not a multiple of 64, mask off excess bits in last word
-        size_t rem = N % WORD_BITS;
-        if (rem)
-            T_final[i * NB_words + NB_words - 1] &= (1ULL << rem) - 1;
-    }
-
-    // -------------------- Step 5: Optional PBM dumps --------------------
-#if ROUTER_ENABLE_DUMP && ROUTER_DUMP_INTERMEDIATE
-    if (debug_prefix && N <= 4096)
-    {
-        dump_pbm_bits((std::string(debug_prefix) + "_S_rot.pbm").c_str(), S_rot.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_T_rot.pbm").c_str(), T_rot.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_S_shuf.pbm").c_str(), S_shuf.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_T_shuf.pbm").c_str(), T_shuf.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_T_final.pbm").c_str(), T_final.data(), N, NB_words);
-        dump_pbm_routes_full((std::string(debug_prefix) + "_O_.pbm").c_str(), routes, N, k);
-    }
-#endif
-
-    // -------------------- Step 6: Route each source row --------------------
-#pragma omp parallel for
-    for (size_t i = 0; i < N; i++)
-    {
-        uint64_t row[NB(N)];
-        rotate_bits_full(&S_bits[i * NB_words], N, NB_words, row_offsets[i], row);
-
-        size_t cnt = 0;
-        for (size_t j = 0; j < N && cnt < k; j++)
-        {
-            const uint64_t *col = &T_final[j * NB_words];
-            for (size_t w = 0; w < NB_words && cnt < k; w++)
-            {
-                uint64_t m = row[w] & col[w];
-                while (m && cnt < k)
-                {
-                    size_t b = __builtin_ctzll(m);
-                    routes[i * k + cnt++] = w * WORD_BITS + b;
-                    m &= m - 1;
-                }
-            }
-        }
-
-        for (; cnt < k; cnt++)
-            routes[i * k + cnt] = -1;
-    }
-}
- */
-
 void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
                             const uint64_t *S_bits,
                             const uint64_t *T_bits,
-                            const size_t *col_perm,
+                            const size_t *row_perm,
+                            const size_t *col_perm_S,
+                            const size_t *col_perm_T,
                             int *routes,
                             const char *debug_prefix = nullptr)
 {
-    // -------------------- Step 1: Compute cumulative row offsets --------------------
+    // -------------------- Step 1: Compute cumulative row offsets (AFTER permutation) --------------------
     std::vector<size_t> row_offsets(N, 0);
+
     for (size_t i = 1; i < N; i++)
     {
         size_t rs = 0;
+        size_t prev = row_perm[i - 1]; // permuted order
+
         for (size_t w = 0; w < NB_words; w++)
-            rs += __builtin_popcountll(S_bits[(i - 1) * NB_words + w]);
+            rs += __builtin_popcountll(S_bits[prev * NB_words + w]);
+
         row_offsets[i] = (row_offsets[i - 1] + rs) % N;
     }
 
@@ -262,8 +129,13 @@ void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
 #pragma omp parallel for
     for (size_t i = 0; i < N; i++)
     {
-        rotate_bits_full(&S_bits[i * NB_words], N, NB_words, row_offsets[i], &S_rot[i * NB_words]);
-        rotate_bits_full(&T_bits[i * NB_words], N, NB_words, row_offsets[i], &T_rot[i * NB_words]);
+        size_t src = row_perm[i];
+
+        rotate_bits_full(&S_bits[src * NB_words], N, NB_words,
+                         row_offsets[i], &S_rot[i * NB_words]);
+
+        rotate_bits_full(&T_bits[src * NB_words], N, NB_words,
+                         row_offsets[i], &T_rot[i * NB_words]);
     }
 
     // -------------------- Step 3: Apply column shuffling --------------------
@@ -273,8 +145,13 @@ void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
 #pragma omp parallel for
     for (size_t i = 0; i < N; i++)
     {
-        permute_columns_bits(&S_rot[i * NB_words], &S_shuf[i * NB_words], col_perm, N, NB_words);
-        permute_columns_bits(&T_rot[i * NB_words], &T_shuf[i * NB_words], col_perm, N, NB_words);
+        permute_columns_bits(&S_rot[i * NB_words],
+                             &S_shuf[i * NB_words],
+                             col_perm_S, N, NB_words);
+
+        permute_columns_bits(&T_rot[i * NB_words],
+                             &T_shuf[i * NB_words],
+                             col_perm_T, N, NB_words);
     }
 
     // -------------------- Step 4: Rotate T 90° clockwise --------------------
@@ -323,11 +200,14 @@ void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
 #if ROUTER_ENABLE_DUMP && ROUTER_DUMP_INTERMEDIATE
     if (debug_prefix && N <= 4096)
     {
-        dump_pbm_bits((std::string(debug_prefix) + "_S_rot.pbm").c_str(), S_rot.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_T_rot.pbm").c_str(), T_rot.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_S_shuf.pbm").c_str(), S_shuf.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_T_shuf.pbm").c_str(), T_shuf.data(), N, NB_words);
-        dump_pbm_bits((std::string(debug_prefix) + "_T_final.pbm").c_str(), T_final.data(), N, NB_words);
+        fs::path dump_folder = debug_prefix; // folder passed from Python
+        fs::create_directories(dump_folder); // ensure it exists
+
+        dump_pbm_bits((dump_folder / "S_rot.pbm").string().c_str(), S_rot.data(), N, NB_words);
+        dump_pbm_bits((dump_folder / "T_rot.pbm").string().c_str(), T_rot.data(), N, NB_words);
+        dump_pbm_bits((dump_folder / "S_shuf.pbm").string().c_str(), S_shuf.data(), N, NB_words);
+        dump_pbm_bits((dump_folder / "T_shuf.pbm").string().c_str(), T_shuf.data(), N, NB_words);
+        dump_pbm_bits((dump_folder / "T_final.pbm").string().c_str(), T_final.data(), N, NB_words);
     }
 #endif
 
@@ -336,24 +216,17 @@ void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
     for (size_t i = 0; i < N; i++)
     {
         size_t cnt = 0;
-
-        // Use the shuffled S row (after column permutation)
         const uint64_t *row = &S_shuf[i * NB_words];
 
-        // Loop over columns of T_final
-        for (size_t j = 0; j < N && cnt < k; j++)
+        for (size_t w = 0; w < NB_words && cnt < k; w++)
         {
-            const uint64_t *col = &T_final[j * NB_words];
+            uint64_t m = row[w] & T_final[w]; // <-- NO j loop
 
-            for (size_t w = 0; w < NB_words && cnt < k; w++)
+            while (m && cnt < k)
             {
-                uint64_t m = row[w] & col[w];
-                while (m && cnt < k)
-                {
-                    size_t b = __builtin_ctzll(m);
-                    routes[i * k + cnt++] = w * WORD_BITS + b;
-                    m &= m - 1;
-                }
+                size_t b = __builtin_ctzll(m);
+                routes[i * k + cnt++] = w * WORD_BITS + b;
+                m &= m - 1;
             }
         }
 
@@ -365,7 +238,12 @@ void phase_router_bitpacked(size_t N, size_t k, size_t NB_words,
 #if ROUTER_ENABLE_DUMP && ROUTER_DUMP_INTERMEDIATE
     if (debug_prefix && N <= 4096)
     {
-        dump_pbm_routes_full((std::string(debug_prefix) + "_O.pbm").c_str(), routes, N, k);
+        fs::path dump_folder = debug_prefix; // recreate here
+        fs::create_directories(dump_folder); // ensure folder exists
+
+        // Dump O.pbm
+        dump_pbm_routes_full((dump_folder / "O.pbm").string().c_str(), routes, N, k);
+        fprintf(stderr, "DEBUG: dumping O.pbm to %s\n", (dump_folder / "O.pbm").string().c_str());
     }
 #endif
 }
@@ -393,27 +271,6 @@ py::array_t<uint8_t> left_align_rows(py::array_t<uint8_t> S_np)
             S_aligned[i * N + j] = 0;
     }
     return S_aligned_np;
-}
-
-py::array_t<uint8_t> top_align_rows(py::array_t<uint8_t> T_np)
-{
-    auto T = T_np.unchecked<2>();
-    size_t N = T.shape(0);
-    py::array_t<uint8_t> T_aligned_np({N, N});
-    uint8_t *T_aligned = (uint8_t *)T_aligned_np.mutable_data();
-
-#pragma omp parallel for
-    for (size_t i = 0; i < N; i++)
-    {
-        size_t ones_count = 0;
-        for (size_t j = 0; j < N; j++)
-            ones_count += T(i, j);
-        for (size_t j = 0; j < ones_count; j++)
-            T_aligned[i * N + j] = 1;
-        for (size_t j = ones_count; j < N; j++)
-            T_aligned[i * N + j] = 0;
-    }
-    return T_aligned_np;
 }
 
 /* =========================
@@ -459,7 +316,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
     size_t NB_words = NB(N);
 
     py::array_t<uint8_t> S_aligned = left_align_rows(S_np);
-    py::array_t<uint8_t> T_aligned = top_align_rows(T_np);
+    py::array_t<uint8_t> T_aligned = left_align_rows(T_np);
 
     std::vector<uint64_t> S_bits(N * NB_words);
     std::vector<uint64_t> T_bits(N * NB_words);
@@ -498,16 +355,28 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
         }
     }
 
-    std::vector<size_t> col_perm(N);
-    unsigned int seed = (unsigned int)time(nullptr);
-    for (size_t j = 0; j < N; j++)
-        col_perm[j] = j;
+    std::vector<size_t> row_perm(N);
+    for (size_t i = 0; i < N; i++)
+        row_perm[i] = i;
 
-    for (size_t j = N - 1; j > 0; j--)
+    std::vector<size_t> col_perm_S(N), col_perm_T(N);
+    for (size_t i = 0; i < N; i++)
     {
-        size_t k = rand_r(&seed) % (j + 1);
-        std::swap(col_perm[j], col_perm[k]);
+        col_perm_S[i] = i;
+        col_perm_T[i] = i;
     }
+
+    uint64_t seed_base =
+        std::chrono::high_resolution_clock::now().time_since_epoch().count();
+
+    std::mt19937_64 rng_rows(seed_base ^ 0xA5A5A5A5A5A5A5A5ULL);
+    std::shuffle(row_perm.begin(), row_perm.end(), rng_rows);
+
+    std::mt19937_64 rng_S(seed_base ^ 0x9E3779B97F4A7C15ULL);
+    std::mt19937_64 rng_T(seed_base ^ 0xD1B54A32D192ED03ULL);
+
+    std::shuffle(col_perm_S.begin(), col_perm_S.end(), rng_S);
+    std::shuffle(col_perm_T.begin(), col_perm_T.end(), rng_T);
 
     double t0_route = now_ms();
 
@@ -515,7 +384,9 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
         N, k, NB_words,
         S_bits.data(),
         T_bits.data(),
-        col_perm.data(),
+        row_perm.data(),
+        col_perm_S.data(),
+        col_perm_T.data(),
         (int *)routes_np.mutable_data(),
         dump ? prefix.c_str() : nullptr);
 
@@ -538,7 +409,9 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
 py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
                                  py::array_t<uint64_t> T_bits_np,
-                                 py::array_t<size_t> col_perm_np,
+                                 py::array_t<size_t> row_perm_np,
+                                 py::array_t<size_t> col_perm_S_np,
+                                 py::array_t<size_t> col_perm_T_np,
                                  size_t k,
                                  py::array_t<int> routes_np)
 {
@@ -546,7 +419,9 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
     phase_router_bitpacked(S_bits_np.shape(0), k, S_bits_np.shape(1),
                            (uint64_t *)S_bits_np.data(),
                            (uint64_t *)T_bits_np.data(),
-                           (size_t *)col_perm_np.data(),
+                           (size_t *)row_perm_np.data(),
+                           (size_t *)col_perm_S_np.data(),
+                           (size_t *)col_perm_T_np.data(),
                            (int *)routes_np.mutable_data());
     double t1 = now_ms();
 
@@ -606,36 +481,24 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
             T_bits[i * NB_words + w] = word;
         }
 
-    std::vector<size_t> col_perm(N);
+    std::vector<size_t> row_perm(N);
     for (size_t i = 0; i < N; i++)
-        col_perm[i] = i;
+        row_perm[i] = i;
+
+    std::vector<size_t> col_perm_S(N), col_perm_T(N);
+    for (size_t i = 0; i < N; i++)
+    {
+        col_perm_S[i] = i;
+        col_perm_T[i] = i;
+    }
 
     phase_router_bitpacked(N, k, NB_words,
                            S_bits.data(), T_bits.data(),
-                           col_perm.data(),
+                           row_perm.data(),
+                           col_perm_S.data(), col_perm_T.data(),
                            (int *)routes_np.mutable_data(),
                            nullptr);
 }
-
-/* =========================
-   PBM dump functions
-   ========================= */
-
-/* static void dump_pbm_u8(const char *filename, const uint8_t *M, size_t N)
-{
-    FILE *f = fopen(filename, "wb");
-    if (!f)
-        return;
-    fprintf(f, "P1\n%zu %zu\n", N, N); // ASCII PBM
-    for (size_t i = 0; i < N; i++)
-    {
-        for (size_t j = 0; j < N; j++)
-            fprintf(f, "%d ", M[i * N + j] ? 1 : 0);
-        fprintf(f, "\n");
-    }
-    fclose(f);
-}
- */
 
 static void dump_pbm_bits(const char *filename, const uint64_t *bits, size_t N, size_t NB_words)
 {
@@ -696,11 +559,13 @@ static void dump_pbm_routes_full(const char *filename, const int *routes, size_t
 PYBIND11_MODULE(router, m)
 {
     m.def("left_align_rows", &left_align_rows);
-    m.def("top_align_rows", &top_align_rows);
     m.def("pack_bits", &pack_bits);
     m.def("phase_router_bitpacked", &phase_router_bitpacked,
           py::arg("N"), py::arg("k"), py::arg("NB_words"),
-          py::arg("S_bits"), py::arg("T_bits"), py::arg("col_perm"), py::arg("routes"),
+          py::arg("S_bits"), py::arg("T_bits"),
+          py::arg("row_perm"),
+          py::arg("col_perm_S"), py::arg("col_perm_T"),
+          py::arg("routes"),
           py::arg("debug_prefix") = nullptr);
     m.def("pack_and_route", &pack_and_route,
           py::arg("S"), py::arg("T"), py::arg("k"), py::arg("routes"),
