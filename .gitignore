@@ -20,3 +20,6 @@ env/
 
 # VSCode settings
 .vscode/
+
+# Image dumps
+dump/
