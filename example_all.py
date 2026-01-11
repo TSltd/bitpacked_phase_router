@@ -69,8 +69,8 @@ def left_top_align(S, T):
 
 
 # -------------------- Configuration --------------------
-N = 256  # rows/columns
-k_max = 128  # maximum targets per row
+N = 4096  # rows/columns eg 256, 512, 1024, 2048, 4096 etc
+k_max = 512  # maximum targets per row
 
 # -------------------- Generate random binary matrices with independent row-wise counts --------------------
 print(f"Generating random binary matrices N={N}, k_max={k_max}...")
@@ -133,10 +133,12 @@ rng = np.random.default_rng(42)
 row_perm = np.arange(N, dtype=np.uint64)
 col_perm_S = np.arange(N, dtype=np.uint64)
 col_perm_T = np.arange(N, dtype=np.uint64)
+row_perm_T = np.arange(N, dtype=np.uint64)
 
 rng.shuffle(row_perm)
 rng.shuffle(col_perm_S)
 rng.shuffle(col_perm_T)
+rng.shuffle(row_perm_T)
 
 # pack ORIGINAL matrices (no row permutation here!)
 S_bits = router.pack_bits(S_random)
@@ -152,6 +154,7 @@ stats_bits = router.route_packed_with_stats(
     row_perm,
     col_perm_S,
     col_perm_T,
+    row_perm_T,
     k,
     routes_bits
 )
