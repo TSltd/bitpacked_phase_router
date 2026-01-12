@@ -341,6 +341,30 @@ static void phase_router_bitpacked(
 #endif
 }
 
+// Extract up to k routes per row from bit-packed O
+void extract_routes_from_O(size_t N, size_t k, size_t NB_words,
+                           const uint64_t *O_bits,
+                           int *routes)
+{
+#pragma omp parallel for
+    for (size_t i = 0; i < N; i++)
+    {
+        size_t cnt = 0;
+        for (size_t w = 0; w < NB_words && cnt < k; w++)
+        {
+            uint64_t m = O_bits[i * NB_words + w];
+            while (m && cnt < k)
+            {
+                size_t b = __builtin_ctzll(m);
+                routes[i * k + cnt++] = w * 64 + b;
+                m &= m - 1;
+            }
+        }
+        for (; cnt < k; cnt++)
+            routes[i * k + cnt] = -1;
+    }
+}
+
 /* =========================
    Alignment functions
    ========================= */
