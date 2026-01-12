@@ -21,5 +21,6 @@ env/
 # VSCode settings
 .vscode/
 
-# Image dumps
+# Dumps
 dump/
+scaling_results/
