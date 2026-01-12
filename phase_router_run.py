@@ -1,256 +1,461 @@
+"""
+phase_router_run.py
+
+Batch execution script for comprehensive scaling experiments.
+Runs multiple test configurations and produces:
+- Performance data (runtime vs N, k)
+- Statistical summaries (load balance, fill ratios)
+- Visual outputs (PBM -> PNG for small N)
+- Reproducibility tests
+- CSV/JSON exports for paper figures
+
+This generates all evaluation data for Section 5 of the paper.
+"""
+
 import numpy as np
-import router
+import json
+import csv
+import time
 from pathlib import Path
-import json, time, os, csv
+from typing import List, Dict, Optional
 import matplotlib.pyplot as plt
-from PIL import Image
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
 
-from phase_router_testing import run_routing_experiment
+from phase_router_test import (
+    run_single_test,
+    make_json_serializable,
+    generate_random_binary_matrices
+)
 
-# ------------------------ Utilities ------------------------
-def generate_random_binary_matrices(N, k_max, seed_S=None, seed_T=None):
-    rng_S = np.random.default_rng(seed_S)
-    rng_T = np.random.default_rng(seed_T)
-    row_counts_S = rng_S.integers(1, k_max + 1, size=N)
-    row_counts_T = rng_T.integers(1, k_max + 1, size=N)
-    S = np.zeros((N, N), dtype=np.uint8)
-    T = np.zeros((N, N), dtype=np.uint8)
-    for i in range(N):
-        S[i, rng_S.choice(N, size=row_counts_S[i], replace=False)] = 1
-        T[i, rng_T.choice(N, size=row_counts_T[i], replace=False)] = 1
-    return S, T
 
-def convert_pbm_to_png(pbm_files, invert=True, png_folder="dump/png"):
-    png_folder = Path(png_folder)
-    png_folder.mkdir(parents=True, exist_ok=True)
-    png_files = []
-    for pbm_file in pbm_files:
-        try:
-            im = Image.open(pbm_file).convert("L")
-            if invert:
-                im = Image.eval(im, lambda x: 255 - x)
-            png_file = png_folder / (pbm_file.stem + ".png")
-            im.save(png_file)
-            png_files.append(png_file)
-        except Exception as e:
-            print(f"Failed to convert {pbm_file} to PNG: {e}")
-    return png_files
+# ============================================================================
+# Batch Experiment Runner
+# ============================================================================
 
-def compute_route_statistics(routes, N, k):
-    row_counts = np.sum(routes != -1, axis=1)
-    stats = dict(
-        min_routes_per_row=int(np.min(row_counts)),
-        max_routes_per_row=int(np.max(row_counts)),
-        mean_routes_per_row=float(np.mean(row_counts)),
-        std_routes_per_row=float(np.std(row_counts))
-    )
-    return stats
-
-def validate_routing(S, T, routes):
-    N, k = routes.shape
-    S_bits = np.sum(S)
-    T_bits = np.sum(T)
-    routed_bits = np.sum([S[i, routes[i] >= 0].sum() + T[i, routes[i] >= 0].sum() for i in range(N)])
-    coverage = routed_bits / max(1, S_bits + T_bits)
-    return coverage
-
-# ------------------------ JSON Utilities ------------------------
-def metrics_to_json_serializable(x):
-    if isinstance(x, dict):
-        return {k: metrics_to_json_serializable(v) for k, v in x.items()}
-    if isinstance(x, list) or isinstance(x, tuple):
-        return [metrics_to_json_serializable(v) for v in x]
-    if isinstance(x, np.ndarray):
-        return x.tolist()
-    if isinstance(x, (np.integer, np.int32, np.int64)):
-        return int(x)
-    if isinstance(x, (np.floating, np.float32, np.float64)):
-        return float(x)
-    if isinstance(x, (np.bool_,)):
-        return bool(x)
-    return x
-
-# ------------------------ Main Scaling Experiment ------------------------
 def run_scaling_experiment(
-    N_values, k_values,
-    output_root="scaling_results",
-    dump_png_for_small_N=True,
-    validate=True,
-    max_png_N=512
-):
-    output_root = Path(output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
-    summary = []
-
+    N_values: List[int],
+    k_values: List[int],
+    output_root: str = "scaling_results",
+    num_trials: int = 3,
+    dump_png_max_N: int = 512,
+    validate: bool = True
+) -> List[Dict]:
+    """
+    Run comprehensive scaling experiments across multiple N and k values.
+    
+    Args:
+        N_values: List of matrix sizes to test
+        k_values: List of k values to test
+        output_root: Output directory for results
+        num_trials: Number of trials per configuration (for averaging)
+        dump_png_max_N: Maximum N for PBM->PNG dumps (small N only)
+        validate: Whether to validate routes
+    
+    Returns:
+        List of all metrics dictionaries
+    """
+    output_path = Path(output_root)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    all_results = []
+    
+    print(f"\n{'='*70}")
+    print(f"SCALING EXPERIMENT")
+    print(f"N values: {N_values}")
+    print(f"k values: {k_values}")
+    print(f"Trials per config: {num_trials}")
+    print(f"Output: {output_root}")
+    print(f"{'='*70}\n")
+    
+    total_tests = len(N_values) * len(k_values) * num_trials
+    test_num = 0
+    
     for N in N_values:
         for k in k_values:
             if k > N:
+                print(f"Skipping N={N}, k={k} (k > N)")
                 continue
-            print(f"\n=== Running N={N}, k={k} ===")
-            S, T = generate_random_binary_matrices(N, k)
-            routes = np.zeros((N, k), dtype=np.int32)
-            run_folder = output_root / f"N_{N}_k_{k}"
-            run_folder.mkdir(parents=True, exist_ok=True)
-            dump_prefix = str(run_folder) if (dump_png_for_small_N and N <= 128) else None
-
-
-            # ------------------------ Adaptive Multiphase Routing ------------------------
-            t0 = time.time()
-            active_routes = k
-            png_files = []
-            metrics = {}
-            coverage_last = 0.0
-            no_progress_count = 0
-            MIN_ROUTES_PER_PHASE = max(1, k // 4)  # minimum routes required to continue
-            max_phases = min(1000, 4 * k)          # limit phases relative to k
-
-            for phase in range(1, max_phases + 1):
-                phase_routes = routes[:, :active_routes]
-
-                # Stop early if too few routes remain
-                if phase_routes.shape[1] < 2:
-                    print(f"Phase {phase}: too few routes ({phase_routes.shape[1]}), stopping early.")
-                    break
-
-                k_current = min(active_routes, phase_routes.shape[1])
-
+            
+            trial_results = []
+            
+            for trial in range(num_trials):
+                test_num += 1
+                print(f"\n[Test {test_num}/{total_tests}] N={N}, k={k}, trial={trial+1}/{num_trials}")
+                
+                # Create output folder for this run
+                run_folder = output_path / f"N{N}_k{k}_trial{trial}"
+                run_folder.mkdir(parents=True, exist_ok=True)
+                
+                # Determine if we should dump PBMs
+                dump_prefix = str(run_folder) if N <= dump_png_max_N else None
+                
+                # Run the test
                 try:
-                    m, phase_routes_update, phase_png_files = run_routing_experiment(
-                        S, T, k_current,
-                        dump_prefix=dump_prefix if N <= 128 else None,
+                    metrics = run_single_test(
+                        N=N,
+                        k=k,
+                        seed_S=None,  # Random for each trial
+                        seed_T=None,
+                        dump_prefix=dump_prefix,
                         validate=validate
                     )
-
-                    # Update routes
-                    routes[:, :k_current] = phase_routes_update
-                    active_routes = k_current
-
-                    # Only save PNGs for small N
-                    if N <= 128:
-                        png_files.extend(phase_png_files)
-
-                    # Merge metrics
-                    metrics.update(m)
-
-                    # Check how many routes were actually added
-                    routes_this_phase = np.sum(phase_routes_update != phase_routes)
-                    if routes_this_phase < MIN_ROUTES_PER_PHASE:
-                        print(f"Phase {phase}: only {routes_this_phase} routes added, below threshold {MIN_ROUTES_PER_PHASE}, stopping early.")
-                        break
-
-                    # Stop if no progress
-                    if np.all(phase_routes_update == phase_routes):
-                        no_progress_count += 1
-                    else:
-                        no_progress_count = 0
-
-                    if no_progress_count >= 3:
-                        print(f"Phase {phase}: no progress for 3 consecutive phases, stopping.")
-                        break
-
-                    # Optional: stop if coverage does not improve
-                    coverage_current = metrics.get("coverage", 0.0)
-                    if coverage_current <= coverage_last:
-                        no_progress_count += 1
-                    else:
-                        no_progress_count = 0
-                    coverage_last = coverage_current
-
-                    if no_progress_count >= 3:
-                        print(f"Phase {phase}: coverage stalled for 3 consecutive phases, stopping.")
-                        break
-
+                    
+                    metrics["trial"] = trial
+                    trial_results.append(metrics)
+                    all_results.append(metrics)
+                    
+                    # Save individual run metrics
+                    with open(run_folder / "metrics.json", "w") as f:
+                        json.dump(make_json_serializable(metrics), f, indent=2)
+                    
                 except Exception as e:
-                    print(f"Phase {phase}: routing failed with k={k_current}, skipping phase. Error: {e}")
+                    print(f"ERROR in test N={N}, k={k}, trial={trial}: {e}")
                     continue
-
-            t1 = time.time()
-            total_time = (t1 - t0) * 1000  # ms
-
-            # Compute route statistics
-            route_stats = compute_route_statistics(routes, N, k)
-            active_routes_final = metrics.get("active_routes", active_routes)
-            coverage = metrics.get("coverage", 0.0)
-            coverage_str = f"{coverage:.3f}"
-
-            # Merge final metrics
-            metrics.update({
-                "N": N,
-                "k": k,
-                "total_time_ms": total_time,
-                **route_stats,
-                "coverage": coverage,
-                "active_routes": active_routes_final
-            })
-
-            summary.append(metrics)
+            
+            # Compute aggregate statistics across trials
+            if trial_results:
+                aggregate = compute_aggregate_metrics(trial_results)
+                aggregate_path = output_path / f"aggregate_N{N}_k{k}.json"
+                with open(aggregate_path, "w") as f:
+                    json.dump(make_json_serializable(aggregate), f, indent=2)
+                
+                print(f"\nAggregate for N={N}, k={k}:")
+                print(f"  Routing time: {aggregate['routing_time_ms_mean']:.2f} ± {aggregate['routing_time_ms_std']:.2f} ms")
+                print(f"  Fill ratio: {aggregate['fill_ratio_mean']:.3f} ± {aggregate['fill_ratio_std']:.3f}")
+                print(f"  Column skew: {aggregate['col_skew_mean']:.2f} ± {aggregate['col_skew_std']:.2f}")
+    
+    print(f"\n{'='*70}")
+    print(f"SCALING EXPERIMENT COMPLETED")
+    print(f"Total tests run: {len(all_results)}")
+    print(f"{'='*70}\n")
+    
+    return all_results
 
 
-            # ---- JSON saving ----
-            metrics_json = metrics_to_json_serializable(metrics)
-            with open(run_folder / "metrics.json", "w") as f:
-                json.dump(metrics_json, f, indent=2)
+def compute_aggregate_metrics(trial_results: List[Dict]) -> Dict:
+    """
+    Compute mean and std across multiple trials.
+    
+    Args:
+        trial_results: List of metrics dicts from multiple trials
+    
+    Returns:
+        Dictionary with mean and std for each metric
+    """
+    if not trial_results:
+        return {}
+    
+    # Identify numeric keys
+    numeric_keys = []
+    for key, value in trial_results[0].items():
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            numeric_keys.append(key)
+    
+    aggregate = {}
+    for key in numeric_keys:
+        values = [r[key] for r in trial_results if key in r]
+        if values:
+            aggregate[f"{key}_mean"] = float(np.mean(values))
+            aggregate[f"{key}_std"] = float(np.std(values))
+            aggregate[f"{key}_min"] = float(np.min(values))
+            aggregate[f"{key}_max"] = float(np.max(values))
+    
+    # Add config info
+    aggregate["N"] = trial_results[0]["N"]
+    aggregate["k"] = trial_results[0]["k"]
+    aggregate["num_trials"] = len(trial_results)
+    
+    return aggregate
 
-            # ---- Save routes ----
-            np.save(run_folder / "routes.npy", routes)
 
-            # ---- Safe print ----
-            print(f"Run completed: active_routes={metrics['active_routes']}, "
-                  f"routing_time={metrics['total_time_ms']:.2f} ms, "
-                  f"PNGs={len(png_files)}, coverage={coverage_str}")
+# ============================================================================
+# Reproducibility Test
+# ============================================================================
 
-    # ---- Save summary CSV ----
-    summary_file = output_root / "summary.csv"
-    keys = summary[0].keys() if summary else []
-    with open(summary_file, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=keys)
+def run_reproducibility_test(
+    N: int = 1024,
+    k: int = 64,
+    num_runs: int = 5,
+    output_root: str = "reproducibility_test"
+) -> Dict:
+    """
+    Test reproducibility with fixed seeds.
+    All runs should produce identical route arrays.
+    
+    Args:
+        N: Matrix size
+        k: Max routes per row
+        num_runs: Number of repeated runs
+        output_root: Output directory
+    
+    Returns:
+        Dictionary with reproducibility test results
+    """
+    output_path = Path(output_root)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    print(f"\n{'='*70}")
+    print(f"REPRODUCIBILITY TEST")
+    print(f"N={N}, k={k}, runs={num_runs}")
+    print(f"Using fixed seeds (S=42, T=123)")
+    print(f"{'='*70}\n")
+    
+    # Use fixed seeds for all runs
+    seed_S = 42
+    seed_T = 123
+    
+    all_routes = []
+    all_metrics = []
+    
+    for run in range(num_runs):
+        print(f"Run {run+1}/{num_runs}...")
+        
+        # Generate with fixed seeds
+        from phase_router_test import generate_random_binary_matrices
+        import router
+        
+        S, T = generate_random_binary_matrices(N, k, seed_S, seed_T)
+        routes = np.zeros((N, k), dtype=np.int32)
+        
+        stats = router.pack_and_route(S, T, k, routes, dump=False, validate=False)
+        
+        all_routes.append(routes.copy())
+        all_metrics.append(stats)
+    
+    # Check if all routes are identical
+    reference = all_routes[0]
+    all_identical = all(np.array_equal(reference, r) for r in all_routes)
+    
+    result = {
+        "N": N,
+        "k": k,
+        "num_runs": num_runs,
+        "seed_S": seed_S,
+        "seed_T": seed_T,
+        "all_identical": all_identical,
+        "test_passed": all_identical
+    }
+    
+    if all_identical:
+        print(f"✓ REPRODUCIBILITY TEST PASSED")
+        print(f"  All {num_runs} runs produced identical routes")
+    else:
+        print(f"✗ REPRODUCIBILITY TEST FAILED")
+        print(f"  Routes differ between runs!")
+        
+        # Report differences
+        for i in range(1, num_runs):
+            diff = np.sum(all_routes[i] != reference)
+            result[f"diff_run{i}"] = int(diff)
+            print(f"  Run {i+1} differs by {diff} entries")
+    
+    # Save result
+    with open(output_path / "reproducibility_result.json", "w") as f:
+        json.dump(make_json_serializable(result), f, indent=2)
+    
+    print(f"\nResults saved to: {output_path}")
+    
+    return result
+
+
+# ============================================================================
+# Generate Summary Reports
+# ============================================================================
+
+def generate_summary_csv(results: List[Dict], output_path: Path):
+    """
+    Generate CSV summary of all results.
+    
+    Args:
+        results: List of all metrics dictionaries
+        output_path: Output file path
+    """
+    if not results:
+        print("No results to summarize")
+        return
+    
+    # Collect all keys
+    all_keys = set()
+    for r in results:
+        all_keys.update(r.keys())
+    
+    # Remove nested dicts
+    csv_keys = [k for k in all_keys if not isinstance(results[0].get(k), dict)]
+    csv_keys.sort()
+    
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=csv_keys)
         writer.writeheader()
-        for row in summary:
-            writer.writerow(metrics_to_json_serializable(row))
+        
+        for result in results:
+            row = {k: result.get(k, "") for k in csv_keys}
+            writer.writerow(make_json_serializable(row))
+    
+    print(f"CSV summary saved: {output_path}")
 
-    # ---- Generate plots ----
-    fig_folder = output_root / "figures"
-    fig_folder.mkdir(exist_ok=True)
 
-    plt.figure(figsize=(8,6))
+def generate_plots(results: List[Dict], output_folder: Path):
+    """
+    Generate performance and scaling plots.
+    
+    Args:
+        results: List of all metrics dictionaries
+        output_folder: Output directory for plots
+    """
+    output_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Extract data
+    data = {}
+    for r in results:
+        N = r["N"]
+        k = r["k"]
+        if (N, k) not in data:
+            data[(N, k)] = []
+        data[(N, k)].append(r)
+    
+    # Plot 1: Routing time vs N (for different k)
+    plt.figure(figsize=(10, 6))
+    k_values = sorted(set(r["k"] for r in results))
+    
     for k in k_values:
-        Ns = [m['N'] for m in summary if m['k']==k]
-        times = [m['total_time_ms'] for m in summary if m['k']==k]
-        plt.plot(Ns, times, marker='o', label=f"k={k}")
-    plt.xlabel("N (matrix size)")
-    plt.ylabel("Routing time (ms)")
-    plt.title("Routing time vs N for different k")
+        N_vals = []
+        time_means = []
+        time_stds = []
+        
+        for (N, k_val), metrics in sorted(data.items()):
+            if k_val == k:
+                times = [m["routing_time_ms"] for m in metrics]
+                N_vals.append(N)
+                time_means.append(np.mean(times))
+                time_stds.append(np.std(times))
+        
+        plt.errorbar(N_vals, time_means, yerr=time_stds, marker='o', label=f"k={k}", capsize=5)
+    
+    plt.xlabel("Matrix Size (N)")
+    plt.ylabel("Routing Time (ms)")
+    plt.title("Routing Performance vs Matrix Size")
     plt.legend()
-    plt.grid(True)
-    plt.savefig(fig_folder / "routing_time_vs_N.png")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_folder / "routing_time_vs_N.png", dpi=150)
     plt.close()
-
-    plt.figure(figsize=(8,6))
+    print(f"Saved: {output_folder / 'routing_time_vs_N.png'}")
+    
+    # Plot 2: Column load balance (skew) vs N
+    plt.figure(figsize=(10, 6))
+    
+    for k in k_values:
+        N_vals = []
+        skew_means = []
+        skew_stds = []
+        
+        for (N, k_val), metrics in sorted(data.items()):
+            if k_val == k:
+                skews = [m["col_skew"] for m in metrics]
+                N_vals.append(N)
+                skew_means.append(np.mean(skews))
+                skew_stds.append(np.std(skews))
+        
+        plt.errorbar(N_vals, skew_means, yerr=skew_stds, marker='s', label=f"k={k}", capsize=5)
+    
+    plt.xlabel("Matrix Size (N)")
+    plt.ylabel("Column Skew (max/mean)")
+    plt.title("Load Balance vs Matrix Size")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.axhline(y=2.0, color='r', linestyle='--', label='2x threshold', alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(output_folder / "column_skew_vs_N.png", dpi=150)
+    plt.close()
+    print(f"Saved: {output_folder / 'column_skew_vs_N.png'}")
+    
+    # Plot 3: Fill ratio vs k
+    plt.figure(figsize=(10, 6))
+    N_values = sorted(set(r["N"] for r in results))
+    
     for N in N_values:
-        ks = [m['k'] for m in summary if m['N']==N]
-        fill_ratios = [m.get('fill_ratio', 0) for m in summary if m['N']==N]
-        plt.plot(ks, fill_ratios, marker='o', label=f"N={N}")
-    plt.xlabel("k (max routes per row)")
-    plt.ylabel("Fill ratio")
-    plt.title("Fill ratio vs k for different N")
+        k_vals = []
+        fill_means = []
+        fill_stds = []
+        
+        for (N_val, k), metrics in sorted(data.items()):
+            if N_val == N:
+                fills = [m["fill_ratio"] for m in metrics]
+                k_vals.append(k)
+                fill_means.append(np.mean(fills))
+                fill_stds.append(np.std(fills))
+        
+        plt.errorbar(k_vals, fill_means, yerr=fill_stds, marker='d', label=f"N={N}", capsize=5)
+    
+    plt.xlabel("Max Routes per Row (k)")
+    plt.ylabel("Fill Ratio")
+    plt.title("Routing Fill Ratio vs k")
     plt.legend()
-    plt.grid(True)
-    plt.savefig(fig_folder / "fill_ratio_vs_k.png")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_folder / "fill_ratio_vs_k.png", dpi=150)
     plt.close()
+    print(f"Saved: {output_folder / 'fill_ratio_vs_k.png'}")
 
-    print(f"\n=== Scaling experiment completed ===")
-    print(f"All results saved in {output_root}")
-    return summary
 
-# ------------------------ Entry Point ------------------------
-if __name__ == "__main__":
-    N_values = [256, 512, 1024, 2048]
-    k_values = [8, 32, 128, 256]
+# ============================================================================
+# Main Entry Point
+# ============================================================================
 
-    summary = run_scaling_experiment(
-        N_values, k_values,
-        output_root="scaling_results",
-        dump_png_for_small_N=True,
-        validate=True,
-        max_png_N=512
+def main():
+    """
+    Main execution function for comprehensive evaluation.
+    """
+    print("\n" + "="*70)
+    print(" BIT-PACKED PHASE ROUTER - COMPREHENSIVE EVALUATION SUITE")
+    print("="*70 + "\n")
+    
+    # Configuration
+    N_values = [256, 512, 1024, 2048, 4096]
+    k_values = [8, 16, 64, 256, 512]
+    num_trials = 3
+    output_root = "evaluation_results"
+    
+    # Run scaling experiments
+    print("\n[1/3] Running scaling experiments...")
+    results = run_scaling_experiment(
+        N_values=N_values,
+        k_values=k_values,
+        output_root=output_root,
+        num_trials=num_trials,
+        dump_png_max_N=512,
+        validate=True
     )
+    
+    # Generate summaries
+    print("\n[2/3] Generating summary reports...")
+    output_path = Path(output_root)
+    generate_summary_csv(results, output_path / "summary.csv")
+    generate_plots(results, output_path / "figures")
+    
+    # Run reproducibility test
+    print("\n[3/3] Running reproducibility test...")
+    repro_result = run_reproducibility_test(
+        N=1024,
+        k=64,
+        num_runs=5,
+        output_root=str(output_path / "reproducibility")
+    )
+    
+    # Final summary
+    print("\n" + "="*70)
+    print(" EVALUATION COMPLETE")
+    print("="*70)
+    print(f"\nResults saved to: {output_root}/")
+    print(f"  - summary.csv: All metrics in CSV format")
+    print(f"  - figures/: Performance plots")
+    print(f"  - reproducibility/: Reproducibility test results")
+    print(f"  - N*_k*_trial*/: Individual test outputs")
+    print(f"\nTotal tests: {len(results)}")
+    print(f"Reproducibility: {'PASSED' if repro_result['test_passed'] else 'FAILED'}")
+    print("\n")
+
+
+if __name__ == "__main__":
+    main()

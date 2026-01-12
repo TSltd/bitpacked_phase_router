@@ -171,6 +171,9 @@ static void phase_router_bitpacked(
     const char *debug_prefix)
 
 {
+    // Global output accumulator
+    std::vector<uint64_t> O_bits(N * NB_words, 0);
+
     // -------------------- Step 1: Compute cumulative row offsets (AFTER permutation) --------------------
     std::vector<size_t> row_offsets(N, 0);
 
@@ -233,7 +236,6 @@ static void phase_router_bitpacked(
 #pragma omp parallel for
     for (size_t i = 0; i < N; i++)
     {
-        // Permute rows of T before transpose
         size_t src_i = row_perm_T[i];
 
         for (size_t j = 0; j < N; j++)
@@ -243,7 +245,6 @@ static void phase_router_bitpacked(
 
             uint64_t bit = (T_shuf[src_i * NB_words + src_word] >> src_bit) & 1ULL;
 
-            // 90° clockwise transpose
             size_t dst_i = j;
             size_t dst_j = i;
 
@@ -252,13 +253,12 @@ static void phase_router_bitpacked(
 
             if (bit)
                 T_final[dst_i * NB_words + dst_word] |= 1ULL << dst_bit;
-
-            size_t rem = N % WORD_BITS;
-            if (rem)
-            {
-                T_final[dst_i * NB_words + NB_words - 1] &= (1ULL << rem) - 1;
-            }
         }
+
+        // Apply mask on the transposed row (dst_i = i) after writing all bits
+        size_t rem = N % WORD_BITS;
+        if (rem)
+            T_final[i * NB_words + NB_words - 1] &= (1ULL << rem) - 1;
     }
 
     // -------------------- Step 5: Optional PBM dumps --------------------
