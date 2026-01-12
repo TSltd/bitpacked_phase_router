@@ -98,28 +98,46 @@ static void dump_column_stats(const char *name,
 static void rotate_bits_full(const uint64_t *src, size_t N, size_t NB_words,
                              size_t offset, uint64_t *dst)
 {
+    if (N == 0)
+        return;
+
+    // Precompute mask for last word (works for N < 64 too)
+    const uint64_t mask = (N % WORD_BITS == 0) ? ~0ULL : (1ULL << (N % WORD_BITS)) - 1;
+
     if (offset == 0)
     {
-        for (size_t w = 0; w < NB_words; w++)
+        // No rotation: just copy & mask last word
+        dst[0] = src[0] & mask;
+        for (size_t w = 1; w < NB_words; w++)
             dst[w] = src[w];
         return;
     }
 
+    // Shortcut for single-word rows (N <= 64)
+    if (NB_words == 1)
+    {
+        dst[0] = ((src[0] << offset) | (src[0] >> (WORD_BITS - offset))) & mask;
+        return;
+    }
+
+    // General multi-word rotation
     size_t word_shift = offset / WORD_BITS;
     size_t bit_shift = offset % WORD_BITS;
 
     for (size_t w = 0; w < NB_words; w++)
     {
         size_t src1 = (w + NB_words - word_shift) % NB_words;
-        size_t src2 = (w + NB_words - word_shift - 1 + NB_words) % NB_words; // wrap around safely
+        size_t src2 = (w + NB_words - word_shift - 1 + NB_words) % NB_words;
 
-        dst[w] = (src[src1] << bit_shift) | (src[src2] >> (WORD_BITS - bit_shift));
+        uint64_t hi = (bit_shift == 0) ? 0 : (src[src2] >> (WORD_BITS - bit_shift));
+        uint64_t lo = src[src1] << bit_shift;
+
+        dst[w] = lo | hi;
+
+        // Mask last word only
+        if (w == NB_words - 1)
+            dst[w] &= mask;
     }
-
-    // Mask off extra bits in last word if N not multiple of 64
-    size_t rem = N % WORD_BITS;
-    if (rem)
-        dst[NB_words - 1] &= (1ULL << rem) - 1;
 }
 
 /* ==================
