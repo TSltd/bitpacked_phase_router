@@ -22,9 +22,6 @@ env/
 .vscode/
 
 # Dumps
-dump/
-scaling_results/
 evaluation_results/
-test_output/
-mini_evaluation/
 *.log
+test_output/

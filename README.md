@@ -30,6 +30,48 @@ For a full discussion of why GPUs are not used, see [Why CPU (and not GPU)?](doc
 
 ---
 
+## Build & Run (Quick Start)
+
+### **1. Build C++ backend**
+
+```bash
+# From project root
+cd src
+python setup.py build_ext --inplace
+```
+
+### **2. Run evaluation / scaling experiments**
+
+```bash
+# From project root
+python evaluation/phase_router_run.py
+```
+
+- Results saved under `evaluation_results/`:
+
+  - `N*_k*_trial*/` → individual run outputs (JSON + PBM/PNG)
+  - `figures/` → performance plots (PNG)
+  - `reproducibility/` → reproducibility test results
+  - `summary.csv` → aggregated metrics
+
+### **3. Quick test (optional)**
+
+```bash
+python tests/phase_router_test.py
+```
+
+- Runs a small routing test with validation and prints metrics to console.
+
+---
+
+**Notes:**
+
+- Requires Python 3.x, NumPy, and a C++ compiler (`g++`, `clang++`, or MSVC).
+- Optional: OpenMP for multi-threaded execution.
+- Scripts are CPU-first and deterministic with fixed seeds.
+
+---
+
 ## What it computes
 
 Given two binary matrices:

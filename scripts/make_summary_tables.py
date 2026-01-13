@@ -6,7 +6,7 @@ import numpy as np
 # ================================
 
 csv_path = "evaluation_results/summary.csv"
-out_path = "summary_tables.md"
+out_path = "docs/summary_tables.md"
 
 df = pd.read_csv(csv_path)
 

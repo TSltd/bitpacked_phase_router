@@ -5,17 +5,22 @@ Single-phase testing module for the bit-packed phase router.
 Implements correctness validation, statistical analysis, and performance metrics
 for the deterministic phase-separated routing algorithm.
 
-This module uses the CORRECT single-phase routing approach from router.cpp.
+This module uses the single-phase routing approach from router.cpp.
 """
 
 import numpy as np
-import router
 import time
 from pathlib import Path
 import json
 from typing import Dict, Tuple, List, Optional
 
-# Optional: PIL for PNG conversion
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent / "src"))
+
+import router
+
 try:
     from PIL import Image
     PIL_AVAILABLE = True

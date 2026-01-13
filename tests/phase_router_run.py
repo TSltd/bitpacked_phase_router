@@ -9,7 +9,6 @@ Runs multiple test configurations and produces:
 - Reproducibility tests
 - CSV/JSON exports for paper figures
 
-This generates all evaluation data for Section 5 of the paper.
 """
 
 import numpy as np
@@ -22,12 +21,20 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 
-from phase_router_test import (
+import sys
+from pathlib import Path
+
+# Add src folder to Python path for router.py
+sys.path.append(str(Path(__file__).parent / "src"))
+
+import router
+
+# Import test helpers from tests/ folder
+from tests.phase_router_test import (
     run_single_test,
     make_json_serializable,
     generate_random_binary_matrices
 )
-
 
 # ============================================================================
 # Batch Experiment Runner
@@ -212,7 +219,7 @@ def run_reproducibility_test(
         print(f"Run {run+1}/{num_runs}...")
         
         # Generate with fixed seeds
-        from phase_router_test import generate_random_binary_matrices
+        from tests.phase_router_test import generate_random_binary_matrices
         import router
         
         S, T = generate_random_binary_matrices(N, k, seed_S, seed_T)
