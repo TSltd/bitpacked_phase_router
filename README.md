@@ -7,12 +7,12 @@ It implements a **deterministic, bit-parallel sampler** for a **degree-capped Ch
 Designed for:
 
 - Mixture-of-Experts (MoE)
-- sparse attention
-- load-balanced fan-out
-- large bipartite graph coupling
-- stochastic routing at scale
+- Sparse attention
+- Load-balanced fan-out
+- Large bipartite graph coupling
+- Stochastic routing at scale
 
-All computation is **bit-packed** (64 bits per word) and uses only
+All computation is **bit-packed** (64 bits per word) and uses only:
 
 ```
 AND, shifts, popcount, and permutations
@@ -28,39 +28,40 @@ The Bit-Packed Phase Router is **designed for CPU execution** to leverage bit-pa
 
 For a full discussion of why GPUs are not used, see [Why CPU (and not GPU)?](docs/why_cpu.md).
 
+---
+
 ## What it computes
 
-Given two binary matrices
+Given two binary matrices:
 
-[
-S,T\in{0,1}^{N\times N}
-]
+```
+S, T ∈ {0,1}^(N×N)
+```
 
-with row sums
+with row sums:
 
-[
-s_i=\sum_j S_{ij}, \qquad
-t_j=\sum_i T_{ij},
-]
+```
+s_i = Σ_j S_ij,    t_j = Σ_i T_ij
+```
 
-the router constructs up to **k routes per row** by computing
+the router constructs up to **k routes per row** by computing:
 
-[
-O = S' ;\wedge; (T')^{\top}
-]
+```
+O = S' ∧ (T')^T
+```
 
-where (S') and (T') are **independently phase-mixed and permuted degree-preserving transforms** of the inputs.
+where `S'` and `T'` are **independently phase-mixed and permuted degree-preserving transforms** of the inputs.
 
-For large (N),
+For large `N`:
 
-[
-\mathbb{E}[O_{ij}] ;\approx; \frac{s_i,t_j}{N}.
-]
+```
+E[O_ij] ≈ s_i * t_j / N
+```
 
 Thus the router samples a **Chung–Lu (configuration-model) bipartite graph** with:
 
-- larger (s_i) → more outgoing routes
-- larger (t_j) → more incoming load
+- Larger `s_i` → more outgoing routes
+- Larger `t_j` → more incoming load
 
 subject to a **hard fan-out cap (k) per source row**.
 
@@ -70,13 +71,13 @@ subject to a **hard fan-out cap (k) per source row**.
 
 The output satisfies:
 
-- expected row sums scale with (s_i)
-- expected column sums scale with (t_j)
-- collisions are uniformly distributed
-- no column becomes a geometric or phase-aligned hotspot
-- fan-out per row is bounded by (k)
+- Expected row sums scale with `s_i`
+- Expected column sums scale with `t_j`
+- Collisions are uniformly distributed
+- No column becomes a geometric or phase-aligned hotspot
+- Fan-out per row is bounded by `k`
 
-The degrees are preserved **in expectation** (as in a configuration model), not exactly per realization.
+The degrees are preserved **in expectation**, not exactly per realization.
 
 ---
 
@@ -84,16 +85,16 @@ The degrees are preserved **in expectation** (as in a configuration model), not 
 
 In MoE, sparse attention, and distributed routing, we need to map many sources to many targets while:
 
-- respecting capacity
-- avoiding hotspots
-- avoiding feedback loops
-- keeping runtime cost low
+- Respecting capacity
+- Avoiding hotspots
+- Avoiding feedback loops
+- Keeping runtime cost low
 
 Most routers rely on:
 
-- hashing
-- learned softmax gates
-- greedy balancing
+- Hashing
+- Learned softmax gates
+- Greedy balancing
 
 These are unstable, require training, or need coordination.
 
@@ -101,113 +102,110 @@ The Phase Router instead produces a **random-like bipartite graph by constructio
 
 ---
 
-## High-level algorithm
+## High-Level Algorithm & Statistical Behavior
 
-### 1. Align
+### **1. Align Rows**
 
-Rows of `S` and `T` are left-aligned so all 1-bits are contiguous.
-This preserves row sums.
+- Left-align all 1s in each row of `S` and `T`
+- Preserves **row sums**
 
----
+```
+s_i = Σ_j S_ij,    t_j = Σ_i T_ij
+```
 
-### 2. Global row permutation
+### **2. Global Row Permutation**
 
-A shared random row permutation is applied to both `S` and `T`.
+- Apply the same random row permutation to both `S` and `T`
+- Randomizes phase placement, removing input order bias
 
-This determines the order in which mass is placed on the phase ring and removes any input ordering structure.
+### **3. Phase Spreading (Independent for S and T)**
 
----
+- For permuted row i:
 
-### 3. Phase spreading (independent for S and T)
+```
+φ_i^S = Σ_{r<i} s_r
+φ_i^T = Σ_{r<i} t_r
+```
 
-For permuted row (i), compute cumulative offsets
+- Cyclically rotate each row by its offset
+- Embeds contiguous "arcs" on a ring of size `N`
+- Acts like **low-discrepancy phase spreading** → reduces collisions
 
-[
-\phi_i^S=\sum_{r<i}s_r, \qquad
-\phi_i^T=\sum_{r<i}t_r.
-]
+### **4. Column Permutations**
 
-Each row is cyclically rotated by its offset, embedding its mass as a contiguous arc on a ring of size (N).
+- Apply **independent column permutations** to `S` and `T`
+- Preserves column sums while destroying geometric correlations
 
-Because offsets are accumulated in **random row order**, these arcs behave like random intervals on a circle.
+### **5. Extra Row Permutation for T & Transpose**
 
----
+- Permute rows of `T` before transposing
+- After transpose, optionally apply column permutation
+- Ensures statistical independence between `S'` and `T'`
 
-### 4. Independent column permutations
+### **6. Bitwise AND & Top-k Extraction**
 
-Apply independent column permutations to `S` and `T`.
+```
+O_ij = Σ_k S'_ik ∧ T'_jk
+```
 
-These preserve column sums while destroying all geometric and phase correlations.
-
----
-
-### 5. Extra row permutation for T and transpose
-
-Before transposing `T`, apply an **independent row permutation** and an additional column permutation during the transpose.
-
-This makes `S` and `T` statistically independent in the shared phase space while preserving their degree sequences.
-
----
-
-### 6. Bit-parallel intersection
-
-Compute
-
-[
-O_{ij}=\sum_k S'*{ik},T'*{jk}
-]
-
-using bit-packed AND and popcount.
-
-From each row, emit the **first (k) hits** in bit order; additional matches are discarded.
-This enforces a **hard fan-out limit** per source.
+- Use **bit-packed AND** and `popcount`
+- For each source row, emit **first k hits**; discard extra
+- Enforces **hard fan-out cap** per row
 
 ---
 
-## Statistical behavior
+### **Statistical Behavior**
 
-After mixing,
+After phase mixing:
 
-[
-\Pr(S'*{ik}=1)\approx\frac{s_i}{N},\qquad
-\Pr(T'*{jk}=1)\approx\frac{t_j}{N}.
-]
+```
+Pr(S'_ik = 1) ≈ s_i / N,    Pr(T'_jk = 1) ≈ t_j / N
+```
 
-Therefore,
+Expected output:
 
-[
-\mathbb{E}[O_{ij}]\approx\frac{s_i t_j}{N},
-]
+```
+E[O_ij] ≈ s_i * t_j / N
+```
 
-which is exactly the **Chung–Lu / configuration-model law**.
+Column loads:
 
-Column loads
+```
+O_j = Σ_i O_ij ≈ Poisson(|S| * t_j / N)
+```
 
-[
-O_j=\sum_i O_{ij}
-]
+- Truncated by the **per-row k-cap**
+- No hotspots, clusters, or stripes → visually a **starfield**
 
-are approximately
+---
 
-[
-O_j\sim\text{Poisson}!\left(\frac{|S|,t_j}{N}\right),
-]
+### **Algorithm Summary Table**
 
-until truncated by the per-row cap (k).
+| Step | Operation                       | Purpose                             |
+| ---- | ------------------------------- | ----------------------------------- |
+| 1    | Align rows                      | Preserve row sums                   |
+| 2    | Global row permutation          | Remove input bias                   |
+| 3    | Phase spreading                 | Uniform arc distribution            |
+| 4    | Column permutation              | Preserve sums, destroy correlations |
+| 5    | Row permutation + Transpose (T) | S/T independence                    |
+| 6    | Bitwise AND + Top-k             | Hard fan-out routing                |
 
-This yields:
+---
 
-- no stripes
-- no clusters
-- no hotspots
+### **Practical Formulas**
 
-Visually, the output looks like a **starfield**.
+```
+Row sum:       r_i = Σ_j O_ij  ≤ k
+Column sum:    c_j = Σ_i O_ij ≤ t_j
+Fill ratio:    fill = (total active routes) / (N * k)
+Load balance:  max(c_j) / mean(c_j)
+```
 
 ---
 
 ## Performance
 
-For (N=4096):
+For N=4096:
 
 | Stage                | Time    |
 | -------------------- | ------- |
@@ -243,7 +241,7 @@ With a fixed seed, identical inputs produce identical routings.
 
 ### Advanced API
 
-Advanced users can provide their own packed arrays and permutations via
+Advanced users can provide their own packed arrays and permutations via:
 
 ```python
 route_packed_with_stats(...)
@@ -255,15 +253,15 @@ route_packed_with_stats(...)
 
 This is:
 
-- a deterministic degree-weighted mixing operator
-- a fast Chung–Lu bipartite sampler
-- a scalable routing primitive with hard fan-out limits
+- A deterministic degree-weighted mixing operator
+- A fast Chung–Lu bipartite sampler
+- A scalable routing primitive with hard fan-out limits
 
 This is **not**:
 
-- a learned router
-- a greedy load balancer
-- a hash
+- A learned router
+- A greedy load balancer
+- A hash
 
 ---
 
@@ -274,17 +272,44 @@ This is **not**:
 - **Software**: Python 3.x, NumPy, optional PyTorch; OpenMP enabled for multi-threaded runs
 - **Matrix sizes (N)**: 256 → 4096
 - **Maximum connections per row/column (k)**: 8 → 512
-- **Number of trials**: 3 independent runs per configuration for scaling experiments; reproducibility tests run 5 repeated runs with fixed seeds
+- **Number of trials**: 3 independent runs per configuration; reproducibility tests run 5 repeated runs with fixed seeds
 - **Inputs**: Random binary matrices `S` and `T` with prescribed row and column sums
 - **Routing**: `O = S' ∧ T'^T` in fully bit-packed implementation
 - **Metrics collected**: Active routes, routes per row, fill ratio, column statistics (min, max, mean, std, skew), runtime (packing, routing, total), optional PBM/PNG visual outputs
 
-All reported times are **mean ± standard deviation** across trials. Detailed testing procedures, statistical analyses, visual evaluations, and reproducibility protocols are described in `phase_router_test.py` and `phase_router_run.py`.
+All reported times are **mean ± standard deviation** across trials. Detailed testing procedures, statistical analyses, visual evaluations, and reproducibility protocols are described in [`phase_router_test.py`](docs/Testing_Suite.md) and [`phase_router_run.py`](docs/Testing_Suite.md).
 
 ---
 
-The theoretical construction is documented in [`theory.md`](docs/theory.md).
-The testing suite is documented in [`Testing Suite.md`](docs/Testing_Suite.md).
-Empirical performance and load-balance results are documented in [`evaluation.md`](docs/evaluation.md).\
+The theoretical construction is documented in [`theory.md`](docs/theory.md)
+The testing suite is documented in [`Testing Suite.md`](docs/Testing_Suite.md)
+Empirical performance and load-balance results are documented in [`evaluation.md`](docs/evaluation.md)
+
+---
+
+## Equation Notes
+
+Some mathematical expressions are written in **plain-text Markdown-friendly form**. Here’s a quick reference:
+
+| Symbol / Expression                         | Meaning                                                                                 |     |     |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- | --- | --- |
+| `S, T ∈ {0,1}^(N×N)`                        | Binary source and target matrices of size N×N                                           |     |     |
+| `s_i = Σ_j S_ij`                            | Row sum of source matrix row i                                                          |     |     |
+| `t_j = Σ_i T_ij`                            | Column sum of target matrix column j                                                    |     |     |
+| `O = S' ∧ (T')^T`                           | Output routing matrix via bitwise AND of phase-mixed `S'` and transposed `T'`           |     |     |
+| `E[O_ij] ≈ s_i * t_j / N`                   | Expected value of each output bit; approximates Chung–Lu configuration-model statistics |     |     |
+| `Pr(S'_ik = 1)`                             | Probability that the k-th bit of row i in `S'` is set                                   |     |     |
+| `O_j = Σ_i O_ij ≈ Poisson(\|S\| * t_j / N)` | Approximate column load distribution, Poisson with mean proportional to `t_j`           |
+
+| `φ_i^S = Σ_{r<i} s_r` | Phase offset for row i in `S` (cumulative sum for barrel-shifting) | | |
+| `fill = (total active routes) / (N * k)` | Fill ratio: fraction of possible routes that are active | | |
+| `max(c_j) / mean(c_j)` | Load balance ratio across columns | | |
+
+**Notes:**
+
+- All summations (`Σ`) are over integers and are implemented efficiently with **bit-packed operations** in code.
+- Bitwise AND (`∧`) represents the intersection of source and target arcs in the phase-spread matrices.
+- Poisson approximation is valid for **large N**, before applying the hard cap `k` per row.
+- All formulas are **illustrative**; the actual code performs these operations **in packed 64-bit words** using CPU bitwise instructions.
 
 ---
