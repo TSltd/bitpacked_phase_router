@@ -4,7 +4,7 @@ This document presents **performance, load-balance, and coverage results** for t
 
 ---
 
-## 1. Experimental Setup
+## Experimental Setup
 
 - **Hardware**: Intel Core i5-2410M CPU @ 2.30 GHz, 2 cores / 4 threads, 8 GB RAM, no discrete GPU
 - **Compiler**: system default C++ compiler used by Python (`python setup.py build_ext`), typically `g++`/`clang++` on Linux/macOS or MSVC on Windows
@@ -18,7 +18,9 @@ All reported times are **mean ± standard deviation** across trials.
 
 ---
 
-## 2. Routing Performance - Runtime Scaling
+## Routing Performance - Runtime Scaling
+
+![Routing time vs N](img/routing_time_vs_N.png)
 
 Mean ± std over trials. Times are C++ timings.
 
@@ -57,7 +59,9 @@ Mean ± std over trials. Times are C++ timings.
 
 ---
 
-## 3. Load Balance (Column Statistics)
+## Load Balance (Column Skew)
+
+![Column skew vs N](img/column_skew_vs_N.png)
 
 Skew = max column load divided by mean column load.
 
@@ -96,7 +100,9 @@ Skew = max column load divided by mean column load.
 
 ---
 
-## 4. Routing Efficiency (Coverage)
+### Routing Efficiency – Fill Ratio vs k
+
+![Fill ratio vs k](img/fill_ratio_vs_k.png)
 
 |    N |   k | Fill ratio      | Coverage S      | Coverage T      | Active routes          |
 | ---: | --: | :-------------- | :-------------- | :-------------- | :--------------------- |
@@ -133,7 +139,7 @@ Skew = max column load divided by mean column load.
 
 ---
 
-## 5. Comparison to Theory
+## Comparison to Theory
 
 - Column loads follow **Poisson-like distribution**, consistent with the Chung–Lu prediction.
 - Row sums are exactly preserved; column sums approximate expected Poisson means.
@@ -142,7 +148,7 @@ Skew = max column load divided by mean column load.
 
 ---
 
-## 6. Takeaways
+## Takeaways
 
 - **Small k**: routing is very fast; column skew is slightly higher.
 - **Large k**: routing is slower but more uniform.
@@ -150,5 +156,3 @@ Skew = max column load divided by mean column load.
 - The Phase Router **reliably produces balanced, degree-preserving bipartite graphs** for MoE, sparse attention, and high-throughput routing.
 
 ---
-
-Do you want me to do that next?
