@@ -2,7 +2,7 @@
 router_stats.py - Monte-Carlo Statistical Utilities for Bit-Packed Phase Router
 
 This module provides statistical analysis tools for the stochastic routing algorithm.
-The router implements a Chung–Lu-style bipartite sampler that creates balanced
+The router implements a Chung-Lu-style bipartite sampler that creates balanced
 sparse subgraphs. These utilities enable:
 
 - Monte-Carlo sampling of routing distributions
@@ -149,7 +149,7 @@ def monte_carlo_stats(
         # Chung–Lu expectation using observed total routing mass
         total_routes = np.sum(mean_load)
         ideal_mean = total_routes * T.sum(axis=0) / (total_t + 1e-12)
-        
+
         bias = mean_load - ideal_mean
         relative_error = np.zeros_like(mean_load)
         valid_bias_mask = ideal_mean > 0
@@ -335,6 +335,88 @@ def estimate_expert_capacity(
         'N': S.shape[0]
     }
 
+def validate_routing_inputs(S: np.ndarray, T: np.ndarray, k: int) -> Dict:
+    """
+    Validate routing inputs and identify potential issues.
+
+    This function checks for edge cases and failure modes that could affect
+    routing quality or performance. It returns warnings rather than errors
+    to allow users to proceed with awareness of potential issues.
+
+    Args:
+        S: Binary source matrix of shape (N, N)
+        T: Binary target matrix of shape (N, N)
+        k: Maximum routes per row
+
+    Returns:
+        Dictionary containing:
+        - warnings: List of warning messages (empty if no issues)
+        - is_valid: True if inputs are valid, False if critical issues found
+        - empty_rows: Indices of empty rows in S
+        - empty_cols: Indices of empty columns in T
+        - skew_ratio: Max/mean ratio for T (measure of input skew)
+    """
+    warnings_list = []
+    empty_rows = []
+    empty_cols = []
+    is_valid = True
+    skew_ratio = 1.0
+
+
+    # Check matrix shapes
+    if S.shape != T.shape:
+        warnings_list.append(f"Input shape mismatch: S={S.shape}, T={T.shape}")
+        is_valid = False
+    elif S.shape[0] != S.shape[1]:
+        warnings_list.append(f"Matrices must be square, got shape {S.shape}")
+        is_valid = False
+    else:
+        N = S.shape[0]
+
+        # Check for empty rows
+        row_sums = S.sum(axis=1)
+        empty_rows = np.where(row_sums == 0)[0].tolist()
+        if len(empty_rows) > 0:
+            warnings_list.append(
+                f"Warning: {len(empty_rows)} empty rows in S will generate zero routes "
+                f"(indices: {empty_rows[:5]}{'...' if len(empty_rows) > 5 else ''})"
+            )
+
+        # Check for empty columns
+        col_sums = T.sum(axis=0)
+        empty_cols = np.where(col_sums == 0)[0].tolist()
+        if len(empty_cols) > 0:
+            warnings_list.append(
+                f"Warning: {len(empty_cols)} empty columns in T are unreachable "
+                f"(indices: {empty_cols[:5]}{'...' if len(empty_cols) > 5 else ''})"
+            )
+
+        # Check k vs N
+        if k > N:
+            warnings_list.append(
+                f"Warning: k={k} > N={N} may cause capacity violations. "
+                f"Consider reducing k or increasing N."
+            )
+
+        # Check skew in T
+        if len(col_sums) > 0 and np.max(col_sums) > 0:
+            skew_ratio = np.max(col_sums) / (np.mean(col_sums) + 1e-9)
+            if skew_ratio > 10:
+                warnings_list.append(
+                    f"Warning: T is highly skewed (max/mean = {skew_ratio:.1f}). "
+                    f"Expect heavy-tailed expert loads. Consider balancing T."
+                )
+        else:
+            skew_ratio = 1.0
+
+    return {
+        'warnings': warnings_list,
+        'is_valid': is_valid,
+        'empty_rows': empty_rows,
+        'empty_cols': empty_cols,
+        'skew_ratio': skew_ratio if 'skew_ratio' in locals() else 1.0
+    }
+
 def analyze_routing_distribution(
     S: np.ndarray,
     T: np.ndarray,
@@ -358,6 +440,11 @@ def analyze_routing_distribution(
     Returns:
         Comprehensive analysis with statistics for each k
     """
+    # Validate inputs first
+    validation = validate_routing_inputs(S, T, k_values[0] if k_values else 16)
+    if validation['warnings']:
+        print(f"Input validation warnings:\n" + "\n".join(f"  - {w}" for w in validation['warnings']))
+
     N = S.shape[0]
 
     if k_values is None:
@@ -387,7 +474,8 @@ def analyze_routing_distribution(
         'k_values': k_values,
         'S_shape': S.shape,
         'T_shape': T.shape,
-        'samples_per_k': samples_per_k
+        'samples_per_k': samples_per_k,
+        'input_validation': validation
     }
 
 # Example usage and demonstration
