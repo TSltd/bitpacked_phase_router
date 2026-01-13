@@ -188,3 +188,154 @@ without learning, hashing, greedy balancing, or coordination.
 It is therefore well suited for large-scale MoE routing, sparse attention, and other high-throughput bipartite coupling problems.
 
 ---
+
+## Monte-Carlo Interpretation of the Phase Router
+
+The bit-packed phase router does **not** attempt to enumerate all valid edges between the bipartite sets defined by `S` and `T`. Instead, it implements a **Chung–Lu–style stochastic sampler** that produces a sparse, balanced bipartite subgraph by sampling a fixed number of edges per row.
+
+This means the router should be understood as a **random transport operator**, not a deterministic solver.
+
+### Chung–Lu Model
+
+Let
+
+- ( S_i ) be the degree (bit count) of row ( i ) in ( S )
+- ( T_j ) be the degree (bit count) of column ( j ) in ( T )
+
+The target distribution is a Chung–Lu bipartite graph:
+
+[
+P(i \rightarrow j) ;\propto; S_i , T_j
+]
+
+subject to a sparsity constraint that each row ( i ) emits at most ( k ) edges.
+
+Each invocation of the router samples a random bipartite graph ( G ) from this distribution, producing a routing matrix
+
+[
+O_{ij}^{(s)} \in {0,1}, \quad \sum_j O_{ij}^{(s)} \le k
+]
+
+where ( s ) indexes the random seed (sample).
+
+---
+
+### What the Router Actually Outputs
+
+The primary observable of interest is **column load**:
+
+[
+L_j^{(s)} = \sum_i O_{ij}^{(s)}
+]
+
+This is the number of tokens, queries, or messages routed to column (expert) ( j ) in sample ( s ).
+
+The router produces a **Monte-Carlo sample** of the random vector
+
+[
+\mathbf{L}^{(s)} = (L_1^{(s)}, \dots, L_N^{(s)})
+]
+
+rather than a fixed routing plan.
+
+Routes themselves are ephemeral; only the induced load distribution matters for performance, balance, and capacity planning.
+
+---
+
+### Expected Loads (Chung–Lu Baseline)
+
+Ignoring the row-cap constraint, the Chung–Lu model predicts
+
+[
+\mathbb{E}[L_j] = k \cdot \frac{T*j}{\sum*\ell T\_\ell}
+]
+
+The phase router implements this distribution **approximately**, with deviations caused by:
+
+- finite ( k )
+- row capacity constraints
+- permutation heuristics
+- collision avoidance
+
+Monte-Carlo sampling is therefore the correct way to characterize its behavior.
+
+---
+
+### Monte-Carlo Estimation
+
+Given ( S, T, k ), we run the router with multiple independent seeds:
+
+[
+\mathbf{L}^{(1)}, \mathbf{L}^{(2)}, \dots, \mathbf{L}^{(M)}
+]
+
+From these samples we estimate:
+
+- Mean load
+  [
+  \mu_j = \frac{1}{M} \sum_s L_j^{(s)}
+  ]
+
+- Variance
+  [
+  \sigma_j^2 = \operatorname{Var}(L_j^{(s)})
+  ]
+
+- Tail risk
+  [
+  Q_{p,j} = \text{p-th percentile of } L_j^{(s)}
+  ]
+
+These quantities directly determine:
+
+- expert utilization
+- overflow probability
+- capacity headroom
+
+---
+
+### Global Load Imbalance (MoE Metric)
+
+For Mixture-of-Experts and attention routing, the key metric is
+
+[
+\text{Global Skew}
+= \frac{\max_j \mu_j}{\frac{1}{N}\sum_j \mu_j}
+]
+
+This measures how overloaded the hottest expert is compared to the average.
+
+A perfectly balanced router has skew = 1.
+Typical MoE systems require skew ≤ 1.5–2 to avoid stragglers.
+
+---
+
+### Capacity Planning
+
+Given Monte-Carlo samples, we can estimate expert capacity requirements:
+
+[
+C_j(p) = \text{p-th percentile of } L_j^{(s)}
+]
+
+To guarantee no overload with probability ≥ ( p ), each expert must support at least ( C_j(p) ) tokens.
+
+This enables statistically principled sizing of MoE experts and communication buffers.
+
+---
+
+### Role of `router_stats.py`
+
+The module `router_stats.py` implements these Monte-Carlo estimators:
+
+| Function                   | Purpose                                     |
+| -------------------------- | ------------------------------------------- |
+| `sample_many`              | Draws ( \mathbf{L}^{(s)} ) samples          |
+| `monte_carlo_stats`        | Estimates mean, variance, percentiles, skew |
+| `suggest_k_for_balance`    | Finds minimal ( k ) achieving target skew   |
+| `estimate_expert_capacity` | Computes tail-risk capacity                 |
+
+These utilities do **not** modify the router.
+They treat it as a black-box sampler and extract the statistically meaningful quantities required for system design.
+
+---
