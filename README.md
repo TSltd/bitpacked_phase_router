@@ -259,7 +259,26 @@ This is **not**:
 - a greedy load balancer
 - a hash
 
-The theoretical construction is documented in [`theory.md`](theory.md)._
-Empirical performance and load-balance results are documented in [`evaluation.md`](evaluation.md)._
+---
+
+## Experimental Setup
+
+- **Hardware**: Intel Core i5-2410M CPU @ 2.30 GHz, 2 cores / 4 threads, 8 GB RAM
+- **Compiler / Build**: Python `setup.py build_ext --inplace` (uses system C++ compiler, e.g., `g++`)
+- **Software**: Python 3.x, NumPy, optional PyTorch; OpenMP enabled for multi-threaded runs
+- **Matrix sizes (N)**: 256 → 4096
+- **Maximum connections per row/column (k)**: 8 → 512
+- **Number of trials**: 3 independent runs per configuration for scaling experiments; reproducibility tests run 5 repeated runs with fixed seeds
+- **Inputs**: Random binary matrices `S` and `T` with prescribed row and column sums
+- **Routing**: `O = S' ∧ T'^T` in fully bit-packed implementation
+- **Metrics collected**: Active routes, routes per row, fill ratio, column statistics (min, max, mean, std, skew), runtime (packing, routing, total), optional PBM/PNG visual outputs
+
+All reported times are **mean ± standard deviation** across trials. Detailed testing procedures, statistical analyses, visual evaluations, and reproducibility protocols are described in `phase_router_test.py` and `phase_router_run.py`.
+
+---
+
+The theoretical construction is documented in [`theory.md`](theory.md).
+The testing suite is documented in [`Testing Suite.md`](Testing_Suite.md).
+Empirical performance and load-balance results are documented in [`evaluation.md`](evaluation.md).\
 
 ---
