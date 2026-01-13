@@ -81,39 +81,49 @@ This preserves all row and column sums.
 
 ---
 
-### 2. Phase spread
+### 2. Global row permutation
 
-Each row is cyclically rotated by an offset equal to the total number of 1s in all previous rows.
-
-This distributes each row’s mass evenly across columns.
+Apply a shared row permutation to both `S` and `T` to break initial correlations.
 
 ---
 
-### 3. Global permutations
+### 3. Phase spread with separate offsets
 
-We apply:
+Each matrix gets its own cumulative offsets:
 
-- one global row permutation
-- one global column permutation
+- `S`: offset[i] = sum of all 1s in previous S rows
+- `T`: offset[i] = sum of all 1s in previous T rows
 
-These:
+Each row is then cyclically rotated by its respective offset.
+
+This distributes each row's mass evenly across columns while maintaining independent phase separation for S and T.
+
+---
+
+### 4. Column permutations
+
+Apply independent column permutations to `S` and `T`:
 
 - preserve all marginals
 - destroy geometric structure
 - mix phases uniformly
 
-For `T`, we use an additional independent row permutation to decorrelate it from `S`.
+---
+
+### 5. Transpose with enhanced mixing
+
+`T` is transposed with an additional column permutation applied during the transpose operation.
+
+This breaks residual geometric patterns and reduces skew.
 
 ---
 
-### 4. Transpose and AND
+### 6. Bitwise AND
 
-`T` is transposed so its columns become fast bit masks.
-
-Routing is then:
+Routing is computed as:
 
 ```
-O = S' ∧ T'
+O = S' ∧ T'^T
 ```
 
 done in bit-packed form using SIMD-friendly ANDs.
@@ -164,6 +174,20 @@ This runs the full pipeline:
 ```
 align → phase → row_perm → col_perm → transpose → AND
 ```
+
+### Reproducible routing
+
+For deterministic, reproducible routing (e.g., for testing or debugging):
+
+```python
+stats = router.pack_and_route(S, T, k, routes, seed=42)
+```
+
+With a fixed seed, identical input matrices will always produce identical routes.
+
+Default behavior (`seed=0`) uses time-based seeding for non-deterministic routing.
+
+### Advanced API
 
 Advanced users can provide their own packed arrays and permutations via:
 

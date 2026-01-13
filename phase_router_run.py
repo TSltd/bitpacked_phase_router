@@ -218,7 +218,7 @@ def run_reproducibility_test(
         S, T = generate_random_binary_matrices(N, k, seed_S, seed_T)
         routes = np.zeros((N, k), dtype=np.int32)
         
-        stats = router.pack_and_route(S, T, k, routes, dump=False, validate=False)
+        stats = router.pack_and_route(S, T, k, routes, dump=False, validate=False, seed=seed_S)
         
         all_routes.append(routes.copy())
         all_metrics.append(stats)

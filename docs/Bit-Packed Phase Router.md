@@ -159,12 +159,13 @@ This formalizes the intuitive “starfield” observed in earlier experiments.
 **Full Pipeline:**
 
 1. Align source rows and target columns
-2. Phase rotation / cumulative barrel shifts
-3. Global row permutation for S
-4. Global column permutation for S
-5. Row permutation for T (pre-transpose)
-6. Transpose T
-7. Bitwise AND to produce routing matrix O
+2. Apply global row permutation to both S and T
+3. Compute separate cumulative offsets for S and T based on their respective row sums
+4. Phase rotation / cumulative barrel shifts (using separate offsets)
+5. Apply column permutations to S and T independently
+6. Apply row permutation to T (pre-transpose)
+7. Transpose T with additional column permutation for enhanced mixing
+8. Bitwise AND to produce routing matrix O
 
 ---
 
