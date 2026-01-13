@@ -36,7 +36,6 @@ For a full discussion of why GPUs are not used, see [Why CPU (and not GPU)?](doc
 
 ```bash
 # From project root
-cd src
 python setup.py build_ext --inplace
 ```
 

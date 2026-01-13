@@ -22,6 +22,7 @@ env/
 .vscode/
 
 # Dumps
+dump/
 evaluation_results/
 *.log
 test_output/

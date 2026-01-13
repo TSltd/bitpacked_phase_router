@@ -24,13 +24,13 @@ matplotlib.use('Agg')  # Non-interactive backend
 import sys
 from pathlib import Path
 
-# Add src folder to Python path for router.py
-sys.path.append(str(Path(__file__).parent / "src"))
+# Add project root to Python path
+sys.path.append(str(Path(__file__).parent.parent))
 
 import router
 
 # Import test helpers from tests/ folder
-from tests.phase_router_test import (
+from evaluation.phase_router_test import (
     run_single_test,
     make_json_serializable,
     generate_random_binary_matrices
@@ -219,7 +219,7 @@ def run_reproducibility_test(
         print(f"Run {run+1}/{num_runs}...")
         
         # Generate with fixed seeds
-        from tests.phase_router_test import generate_random_binary_matrices
+        from evaluation.phase_router_test import generate_random_binary_matrices
         import router
         
         S, T = generate_random_binary_matrices(N, k, seed_S, seed_T)
@@ -462,6 +462,26 @@ def main():
     print(f"\nTotal tests: {len(results)}")
     print(f"Reproducibility: {'PASSED' if repro_result['test_passed'] else 'FAILED'}")
     print("\n")
+
+    # -------------------------------
+    # Run make_summary_tables.py at the very end
+    # -------------------------------
+    import subprocess
+    make_tables_script = Path(__file__).parent.parent / "scripts" / "make_summary_tables.py"
+
+    print("\n[4/4] Generating paper-ready summary tables...")
+
+    if make_tables_script.exists():
+        try:
+            subprocess.run(
+                ["python", str(make_tables_script)],
+                check=True
+            )
+            print("✓ Summary tables generated successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"✗ Error running make_summary_tables.py: {e}")
+    else:
+        print(f"✗ Script not found: {make_tables_script}")
 
 
 if __name__ == "__main__":

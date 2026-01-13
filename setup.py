@@ -4,12 +4,12 @@ import numpy
 
 ext = Extension(
     "router",
-    ["router.cpp"],
+    sources=["src/router.cpp"],  
     include_dirs=[
         pybind11.get_include(),
         numpy.get_include()
     ],
-    extra_compile_args=["-O3", "-fopenmp"],
+    extra_compile_args=["-O3", "-fopenmp", "-std=c++17"], 
     extra_link_args=["-fopenmp"],
     language="c++"
 )

@@ -617,7 +617,8 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
                                  size_t k,
                                  py::array_t<int> routes_np,
                                  bool validate = false,
-                                 const std::string &debug_prefix = "")
+                                 const std::string &debug_prefix = "",
+                                 uint64_t seed = 0)
 {
     size_t N = S_bits_np.shape(0);
     size_t NB_words = S_bits_np.shape(1);
@@ -641,7 +642,10 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
     std::memcpy(row_perm_T.data(), row_perm_T_np.data(), N * sizeof(uint64_t));
 
     // Initialize row_perm_phase and col_perm_transpose
-    uint64_t seed_base = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    // Use provided seed if non-zero, otherwise use current time
+    uint64_t seed_base = (seed == 0)
+                             ? std::chrono::high_resolution_clock::now().time_since_epoch().count()
+                             : seed;
     std::mt19937_64 rng_transpose(seed_base ^ 0x123456789ABCDEF0ULL);
 
     for (size_t i = 0; i < N; i++)
@@ -701,7 +705,8 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
                       size_t k,
                       py::array_t<int> routes_np,
                       bool validate = false,
-                      const std::string &debug_prefix = "")
+                      const std::string &debug_prefix = "",
+                      uint64_t seed = 0)
 {
     size_t N = S_np.shape(0);
     size_t NB_words = NB(N);
@@ -752,7 +757,10 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
         col_perm_transpose[i] = i;
     }
 
-    uint64_t seed_base = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    // Use provided seed if non-zero, otherwise use current time
+    uint64_t seed_base = (seed == 0)
+                             ? std::chrono::high_resolution_clock::now().time_since_epoch().count()
+                             : seed;
 
     std::mt19937_64 rng_phase(seed_base ^ 0x243F6A8885A308D3ULL);
     std::shuffle(row_perm_phase.begin(), row_perm_phase.end(), rng_phase);
@@ -880,11 +888,13 @@ PYBIND11_MODULE(router, m)
           py::arg("k"),
           py::arg("routes"),
           py::arg("validate") = false,
-          py::arg("debug_prefix") = "");
+          py::arg("debug_prefix") = "",
+          py::arg("seed") = 0);
 
     m.def("router", &phase_router_cpp,
           py::arg("S"), py::arg("T"),
           py::arg("k"), py::arg("routes"),
           py::arg("validate") = false,
-          py::arg("debug_prefix") = "");
+          py::arg("debug_prefix") = "",
+          py::arg("seed") = 0);
 }
