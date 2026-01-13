@@ -22,6 +22,12 @@ making it memory-bandwidth limited, cache-efficient, and SIMD-friendly.
 
 ---
 
+### **CPU-First Design**
+
+The Bit-Packed Phase Router is **designed for CPU execution** to leverage bit-parallel operations, cache-friendly access, and deterministic top-k routing.
+
+For a full discussion of why GPUs are not used, see [Why CPU (and not GPU)?](docs/why_cpu.md).
+
 ## What it computes
 
 Given two binary matrices
@@ -277,8 +283,8 @@ All reported times are **mean ± standard deviation** across trials. Detailed te
 
 ---
 
-The theoretical construction is documented in [`theory.md`](theory.md).
-The testing suite is documented in [`Testing Suite.md`](Testing_Suite.md).
-Empirical performance and load-balance results are documented in [`evaluation.md`](evaluation.md).\
+The theoretical construction is documented in [`theory.md`](docs/theory.md).
+The testing suite is documented in [`Testing Suite.md`](docs/Testing_Suite.md).
+Empirical performance and load-balance results are documented in [`evaluation.md`](docs/evaluation.md).\
 
 ---
