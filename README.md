@@ -2,7 +2,9 @@
 
 A **high-performance C++ / Python library** for building **balanced, collision-free bipartite routings** between large sparse binary matrices.
 
-It is designed for:
+It implements a **deterministic, bit-parallel sampler** for a **degree-capped Chung–Lu bipartite graph** using cyclic phase mixing and permutations.
+
+Designed for:
 
 - Mixture-of-Experts (MoE)
 - sparse attention
@@ -10,64 +12,86 @@ It is designed for:
 - large bipartite graph coupling
 - stochastic routing at scale
 
-The router converts two fixed-degree binary matrices into a **uniformly mixed routing field** with preserved row and column sums and **Poisson-like collision statistics**.
-
-All computation is **bit-packed** (64 bits per word) and uses only:
+All computation is **bit-packed** (64 bits per word) and uses only
 
 ```
 AND, shifts, popcount, and permutations
 ```
 
-making it extremely fast and cache-efficient.
+making it memory-bandwidth limited, cache-efficient, and SIMD-friendly.
 
 ---
 
 ## What it computes
 
-Given:
+Given two binary matrices
 
-- `S ∈ {0,1}^{N×N}` (sources)
-- `T ∈ {0,1}^{N×N}` (targets)
+[
+S,T\in{0,1}^{N\times N}
+]
 
-the router produces a routing matrix:
+with row sums
 
-```
-O = S' ∧ T'
-```
+[
+s_i=\sum_j S_{ij}, \qquad
+t_j=\sum_i T_{ij},
+]
 
-where `S'` and `T'` are **degree-preserving mixed versions** of the inputs.
+the router constructs up to **k routes per row** by computing
+
+[
+O = S' ;\wedge; (T')^{\top}
+]
+
+where (S') and (T') are **independently phase-mixed and permuted degree-preserving transforms** of the inputs.
+
+For large (N),
+
+[
+\mathbb{E}[O_{ij}] ;\approx; \frac{s_i,t_j}{N}.
+]
+
+Thus the router samples a **Chung–Lu (configuration-model) bipartite graph** with:
+
+- larger (s_i) → more outgoing routes
+- larger (t_j) → more incoming load
+
+subject to a **hard fan-out cap (k) per source row**.
+
+---
+
+## Guarantees
 
 The output satisfies:
 
-- Row sums of `O` are proportional to row sums of `S`
-- Column sums of `O` are proportional to column sums of `T`
-- Collisions are spread uniformly
-- No column becomes a hotspot
+- expected row sums scale with (s_i)
+- expected column sums scale with (t_j)
+- collisions are uniformly distributed
+- no column becomes a geometric or phase-aligned hotspot
+- fan-out per row is bounded by (k)
+
+The degrees are preserved **in expectation** (as in a configuration model), not exactly per realization.
 
 ---
 
 ## Why this is useful
 
-In many systems (MoE, sharded KV stores, sparse attention), we need to assign many sources to many targets while:
+In MoE, sparse attention, and distributed routing, we need to map many sources to many targets while:
 
 - respecting capacity
 - avoiding hotspots
 - avoiding feedback loops
 - keeping runtime cost low
 
-Most approaches use:
+Most routers rely on:
 
 - hashing
-- softmax routers
-- greedy load balancing
+- learned softmax gates
+- greedy balancing
 
-All of these either:
+These are unstable, require training, or need coordination.
 
-- produce unstable load,
-- require learning,
-- or require expensive coordination.
-
-The Phase Router instead builds a **degree-preserving random-like bipartite graph by construction**, using only deterministic transforms and permutations.
+The Phase Router instead produces a **random-like bipartite graph by construction**, using only deterministic transforms and bitwise operations.
 
 ---
 
@@ -75,81 +99,109 @@ The Phase Router instead builds a **degree-preserving random-like bipartite grap
 
 ### 1. Align
 
-Rows of `S` and columns of `T` are packed so that all 1s are contiguous.
-
-This preserves all row and column sums.
+Rows of `S` and `T` are left-aligned so all 1-bits are contiguous.
+This preserves row sums.
 
 ---
 
 ### 2. Global row permutation
 
-Apply a shared row permutation to both `S` and `T` to break initial correlations.
+A shared random row permutation is applied to both `S` and `T`.
+
+This determines the order in which mass is placed on the phase ring and removes any input ordering structure.
 
 ---
 
-### 3. Phase spread with separate offsets
+### 3. Phase spreading (independent for S and T)
 
-Each matrix gets its own cumulative offsets:
+For permuted row (i), compute cumulative offsets
 
-- `S`: offset[i] = sum of all 1s in previous S rows
-- `T`: offset[i] = sum of all 1s in previous T rows
+[
+\phi_i^S=\sum_{r<i}s_r, \qquad
+\phi_i^T=\sum_{r<i}t_r.
+]
 
-Each row is then cyclically rotated by its respective offset.
+Each row is cyclically rotated by its offset, embedding its mass as a contiguous arc on a ring of size (N).
 
-This distributes each row's mass evenly across columns while maintaining independent phase separation for S and T.
-
----
-
-### 4. Column permutations
-
-Apply independent column permutations to `S` and `T`:
-
-- preserve all marginals
-- destroy geometric structure
-- mix phases uniformly
+Because offsets are accumulated in **random row order**, these arcs behave like random intervals on a circle.
 
 ---
 
-### 5. Transpose with enhanced mixing
+### 4. Independent column permutations
 
-`T` is transposed with an additional column permutation applied during the transpose operation.
+Apply independent column permutations to `S` and `T`.
 
-This breaks residual geometric patterns and reduces skew.
-
----
-
-### 6. Bitwise AND
-
-Routing is computed as:
-
-```
-O = S' ∧ T'^T
-```
-
-done in bit-packed form using SIMD-friendly ANDs.
+These preserve column sums while destroying all geometric and phase correlations.
 
 ---
 
-## What the output looks like
+### 5. Extra row permutation for T and transpose
 
-Statistically, the output behaves like a **random bipartite graph with fixed degrees**:
+Before transposing `T`, apply an **independent row permutation** and an additional column permutation during the transpose.
 
-- Each output cell behaves approximately like a Bernoulli random variable
-- Each output column behaves approximately like a Poisson random variable
+This makes `S` and `T` statistically independent in the shared phase space while preserving their degree sequences.
 
-This produces:
+---
+
+### 6. Bit-parallel intersection
+
+Compute
+
+[
+O_{ij}=\sum_k S'*{ik},T'*{jk}
+]
+
+using bit-packed AND and popcount.
+
+From each row, emit the **first (k) hits** in bit order; additional matches are discarded.
+This enforces a **hard fan-out limit** per source.
+
+---
+
+## Statistical behavior
+
+After mixing,
+
+[
+\Pr(S'*{ik}=1)\approx\frac{s_i}{N},\qquad
+\Pr(T'*{jk}=1)\approx\frac{t_j}{N}.
+]
+
+Therefore,
+
+[
+\mathbb{E}[O_{ij}]\approx\frac{s_i t_j}{N},
+]
+
+which is exactly the **Chung–Lu / configuration-model law**.
+
+Column loads
+
+[
+O_j=\sum_i O_{ij}
+]
+
+are approximately
+
+[
+O_j\sim\text{Poisson}!\left(\frac{|S|,t_j}{N}\right),
+]
+
+until truncated by the per-row cap (k).
+
+This yields:
 
 - no stripes
 - no clusters
 - no hotspots
 
-Visually, the matrix looks like a **starfield**.
+Visually, the output looks like a **starfield**.
 
 ---
 
 ## Performance
 
-For `N = 4096`:
+For (N=4096):
 
 | Stage                | Time    |
 | -------------------- | ------- |
@@ -157,39 +209,35 @@ For `N = 4096`:
 | Bit-packed AND       | ~327 ms |
 | Total routing        | ~0.5 s  |
 
-This is **memory-bandwidth limited**, not compute-limited.
+The kernel is **memory-bandwidth limited**, not compute-limited.
 
 ---
 
 ## Python API
 
-For most users:
-
 ```python
 stats = router.pack_and_route(S, T, k, routes)
 ```
 
-This runs the full pipeline:
+Runs:
 
 ```
-align → phase → row_perm → col_perm → transpose → AND
+align → phase → permutations → transpose → AND → top-k extraction
 ```
 
 ### Reproducible routing
-
-For deterministic, reproducible routing (e.g., for testing or debugging):
 
 ```python
 stats = router.pack_and_route(S, T, k, routes, seed=42)
 ```
 
-With a fixed seed, identical input matrices will always produce identical routes.
+With a fixed seed, identical inputs produce identical routings.
 
-Default behavior (`seed=0`) uses time-based seeding for non-deterministic routing.
+---
 
 ### Advanced API
 
-Advanced users can provide their own packed arrays and permutations via:
+Advanced users can provide their own packed arrays and permutations via
 
 ```python
 route_packed_with_stats(...)
@@ -201,16 +249,17 @@ route_packed_with_stats(...)
 
 This is:
 
-- a deterministic degree-preserving mixing operator
-- a fast way to generate random-like bipartite graphs
-- a scalable routing primitive
+- a deterministic degree-weighted mixing operator
+- a fast Chung–Lu bipartite sampler
+- a scalable routing primitive with hard fan-out limits
 
 This is **not**:
 
 - a learned router
 - a greedy load balancer
-- a heuristic hash
+- a hash
 
-The theoretical construction is documented in `theory.md`.
+The theoretical construction is documented in [`theory.md`](theory.md)._
+Empirical performance and load-balance results are documented in [`evaluation.md`](evaluation.md)._
 
 ---

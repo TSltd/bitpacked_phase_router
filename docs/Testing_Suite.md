@@ -7,7 +7,7 @@ We have two scripts for testing the phase router:
 - **`phase_router_test.py`** – executes **single tests** for a given matrix size (`N`) and routing degree (`k`). Performs correctness checks, statistics, and optional visual outputs.
 - **`phase_router_run.py`** – executes **batches of tests** over multiple `N`, `k`, and threading configurations, collects metrics, and produces reproducibility and scaling data.
 
-These scripts are designed to work with the **single-phase router** (`router.router`, `pack_and_route`, `route_packed_with_stats`) and **replace the previous broken multiphase logic**.
+These scripts are designed to work with the **single-phase router** (`router.router`, `pack_and_route`, `route_packed_with_stats`).
 
 ---
 
@@ -72,7 +72,7 @@ These scripts are designed to work with the **single-phase router** (`router.rou
 
    - Dump PBM/PNG for:
 
-     - `S_rot`, `T_rot`, `S_phase`, `T_phase`, `S_shuf`, `T_shuf`, `T_final`, `O`.
+     - `S_rot`, `T_rot`, `S_shuf`, `T_shuf`, `T_final`, `O`.
 
    - Verify phase separation and uniform dispersal.
 
@@ -158,21 +158,5 @@ These scripts are designed to work with the **single-phase router** (`router.rou
 - **Reproducibility logs**:
 
   - Seed, hash of routes array for regression.
-
----
-
-## **5. Additional Notes**
-
-- Both scripts should support **direct import of the C++ router module**.
-- Scripts must **preserve all existing functionality** of router outputs, PBM dumps, and validation checks.
-- Multi-phase iteration logic from previous versions should **not be used**. Instead:
-
-  - Loop over different `k` or rerun the single-phase router for testing purposes.
-
-- All tests should be **self-contained**, reproducible, and scriptable for batch evaluation.
-
----
-
-This specification can serve as a **checklist** when implementing or refactoring `phase_router_test.py` and `phase_router_run.py`.
 
 ---
