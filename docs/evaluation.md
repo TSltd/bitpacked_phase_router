@@ -55,7 +55,7 @@ Mean ± std over trials. Times are C++ timings.
 
 - Runtime scales roughly linearly with N for fixed k.
 - Small k values yield faster routing due to fewer active bits to propagate.
-- The routing pipeline is **memory-bandwidth limited**, not compute-limited.
+- It is reasonable to assume that the routing pipeline is **memory-bandwidth limited**, not compute-limited.
 
 ---
 
