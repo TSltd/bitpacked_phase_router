@@ -122,6 +122,7 @@ Any load variation is statistical, not algorithmic.
 The output distribution depends only on:
 
 • the degree sequences `{s_i}`, `{t_j}`
+
 • the random seed
 
 not on matrix geometry.
@@ -140,8 +141,11 @@ This supports reproducible experiments and Monte-Carlo evaluation over random ph
 In MoE, sparse attention, and large-scale routing, we must map many sources to many targets while:
 
 • respecting capacity
+
 • avoiding hotspots
+
 • preventing feedback loops
+
 • staying fast
 
 Most systems rely on learned gates, hashing, or greedy balancing.
@@ -150,9 +154,13 @@ The Phase Router instead produces a **random-like bipartite coupling by construc
 It gives you:
 
 • degree-weighted load
+
 • bounded fan-out
+
 • no coordination
+
 • no training
+
 • no geometry leaks
 
 Unlike flow-based or b-matching approaches, the Phase Router does not solve a global optimization problem; it implements a fast randomized transport with predictable first-order statistical behavior.
@@ -184,8 +192,11 @@ python setup.py build_ext --inplace
 The Phase Router is optimized for CPUs because it is:
 
 • memory-bandwidth limited
+
 • permutation heavy
+
 • branchy
+
 • bit-parallel
 
 It maps naturally to cache-coherent SIMD hardware.
@@ -353,8 +364,11 @@ E[Oj​]=i∑​E[Oij​]=i∑​Nsi​tj​​=Ntj​​i∑​si​=N∣S∣tj
 ```
 
 • Asymptotically degree-weighted
+
 • Weakly correlated across rows
+
 • More regular (lower variance) than independent Chung–Lu sampling
+
 • Truncated by the per-row k-cap
 
 ---
@@ -632,7 +646,9 @@ All reported times are **mean ± standard deviation** across trials. Detailed te
 ---
 
 The theoretical construction is documented in [`theory.md`](docs/theory.md)
+
 The testing suite is documented in [`Testing Suite.md`](docs/Testing_Suite.md)
+
 Empirical performance and load-balance results are documented in [`evaluation.md`](docs/evaluation.md)
 
 ---
@@ -643,16 +659,16 @@ Some mathematical expressions are written in **plain-text Markdown-friendly form
 
 | Symbol / Expression                      | Meaning                                                                                                        |     |     |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --- | --- |
-| `S, T ∈ {0,1}^(N×N)`                     | Binary source and target matrices of size N×N                                                                  |     |     |
-| `s_i = Σ_j S_ij`                         | Row sum of source matrix row i                                                                                 |     |     |
-| `t_j = Σ_i T_ij`                         | Column sum of target matrix column j                                                                           |     |     |
-| `O = S' ∧ (T')^T`                        | Output routing matrix via bitwise AND of phase-mixed `S'` and transposed `T'`                                  |     |     |
-| `E[O_ij] ≈ s_i * t_j / N`                | Expected value of each output bit; approximates the expected-degree law of Chung–Lu, not its edge distribution |     |     |
-| `Pr(S'_ik = 1)`                          | Probability that the k-th bit of row i in `S'` is set                                                          |     |     |
+| `S, T ∈ {0,1}^(N×N)`                     | Binary source and target matrices of size N×N                                                                  |
+| `s_i = Σ_j S_ij`                         | Row sum of source matrix row i                                                                                 |
+| `t_j = Σ_i T_ij`                         | Column sum of target matrix column j                                                                           |
+| `O = S' ∧ (T')^T`                        | Output routing matrix via bitwise AND of phase-mixed `S'` and transposed `T'`                                  |
+| `E[O_ij] ≈ s_i * t_j / N`                | Expected value of each output bit; approximates the expected-degree law of Chung–Lu, not its edge distribution |
+| `Pr(S'_ik = 1)`                          | Probability that the k-th bit of row i in `S'` is set                                                          |
 | `O_j = Σ_i O_ij`                         | Column load induced by structured phase overlap (not an independent-edge model)                                |
-| `φ_i^S = Σ_{r<i} s_r`                    | Phase offset for row i in `S` (cumulative sum for barrel-shifting)                                             |     |     |
-| `fill = (total active routes) / (N * k)` | Fill ratio: fraction of possible routes that are active                                                        |     |     |
-| `max(c_j) / mean(c_j)`                   | Load balance ratio across columns                                                                              |     |     |
+| `φ_i^S = Σ_{r<i} s_r`                    | Phase offset for row i in `S` (cumulative sum for barrel-shifting)                                             |
+| `fill = (total active routes) / (N * k)` | Fill ratio: fraction of possible routes that are active                                                        |
+| `max(c_j) / mean(c_j)`                   | Load balance ratio across columns                                                                              |
 
 **Notes:**
 
