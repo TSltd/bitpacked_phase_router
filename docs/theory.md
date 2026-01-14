@@ -207,7 +207,7 @@ without learning, hashing, greedy balancing, or coordination. Ideal for **large-
 
 ---
 
-## Monte-Carlo Interpretation of the Phase Router
+### Monte-Carlo Interpretation of the Phase Router
 
 The bit-packed phase router implements a **Chung–Lu–style stochastic sampler**:
 
