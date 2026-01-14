@@ -1,11 +1,5 @@
 # **Bit-Packed Phase Router**
 
-Phase-Packed Degree-Constrained Bipartite Transport
-
-Cyclic Phase Intersection Router
-
-Bitwise Phase-Coupled Transport Operator
-
 A **high-performance C++ / Python library** for constructing **balanced, randomly mixed bipartite routings** using only **deterministic bitwise operations and permutations**.
 
 The Phase Router implements a **seed-controlled phase-space mixing operator** that converts two degree-specified binary matrices into a sparse bipartite coupling with **no geometric or phase-aligned bias**.
