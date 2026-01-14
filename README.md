@@ -36,11 +36,17 @@ Here `S'` and `T'` are **degree-preserving, randomly phase-mixed transforms** of
 The transformation consists of:
 
 • left-aligning all 1-bits in each row
+
 • randomly permuting rows
+
 • assigning each row a cumulative phase offset
+
 • applying independent column permutations
+
 • permuting and transposing `T`
+
 • intersecting the two packed fields
+
 • keeping only the first `k` matches per row
 
 All operations preserve row sums and use only deterministic bit-parallel primitives.
