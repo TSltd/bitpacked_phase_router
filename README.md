@@ -165,6 +165,26 @@ Unlike flow-based or b-matching approaches, the Phase Router does not solve a gl
 
 ---
 
+## Comparison with Alternative Routing Constructions
+
+| Router type      | Learned | Deterministic | Load guarantees | Fan-out bound | Global state |
+| ---------------- | ------- | ------------- | --------------- | ------------- | ------------ |
+| Softmax MoE      | ✓       | ✗             | Weak            | ✗             | ✓            |
+| Hash router      | ✗       | ✓             | Poor            | ✓             | ✗            |
+| Greedy balancer  | ✗       | ✓             | Strong          | ✓             | ✓            |
+| **Phase Router** | ✗       | ✓             | **Statistical** | **✓**         | ✗            |
+
+## Build & Run (Quick Start)
+
+### **1. Build C++ backend**
+
+```bash
+# From project root
+python setup.py build_ext --inplace
+```
+
+---
+
 ## CPU-first design
 
 The Phase Router is optimized for CPUs because it is:
@@ -178,15 +198,6 @@ It maps naturally to cache-coherent SIMD hardware.
 GPUs are not required and often underperform for this workload.
 
 ---
-
-## Build & Run (Quick Start)
-
-### **1. Build C++ backend**
-
-```bash
-# From project root
-python setup.py build_ext --inplace
-```
 
 ### **2. Run evaluation / scaling experiments**
 
