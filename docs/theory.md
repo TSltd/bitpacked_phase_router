@@ -6,6 +6,28 @@ We present a deterministic construction that maps two binary matrices with presc
 
 ---
 
+# **Equation Reference Table**
+
+| Symbol / Formula                                | Meaning / Role                                                            | Code / Context Reference                    |                                                 |                        |
+| ----------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------- | ----------------------------------------------- | ---------------------- |
+| `S, T ∈ {0,1}^{N×N}`                            | Input binary matrices, indicating allowed sources (`S`) and targets (`T`) | Input to `phase_router.py`                  |                                                 |                        |
+| `s_i = sum_j S_{ij}`                            | Row sum of `S` (source load for row `i`)                                  | `row_sums(S)`                               |                                                 |                        |
+| `t_j = sum_i T_{ij}`                            | Column sum of `T` (target load for column `j`)                            | `col_sums(T)`                               |                                                 |                        |
+| `φ_i = sum_{r < i} s_r`                         | Phase offset for row `i` (cyclic shift to spread 1-bits)                  | Internal in phase spreading step            |                                                 |                        |
+| `O_{ij} = sum_k (S'_{ik} ∧ T'_{jk})`            | Routing matrix; counts intersections of mixed matrices                    | Output of `phase_router.py`                 |                                                 |                        |
+| `E[O_{ij}] = s_i * t_j / N`                     | Expected flow between source `i` and target `j`                           | Chung–Lu baseline                           |                                                 |                        |
+| `O_j = sum_i O_{ij}`                            | Total load on column `j`                                                  | Column load calculation (`router_stats.py`) |                                                 |                        |
+| `O_j ~ Poisson(                                 | S                                                                         | \* t_j / N)`                                | Asymptotic Poisson approximation of column load | Monte-Carlo evaluation |
+| `O_{ij} = min(tilde O_{ij}, k)`                 | Row fan-out truncation to enforce bounded capacity                        | `phase_router.py` implementation            |                                                 |                        |
+| `deg(i) ~ min(Poisson(s_i), k)`                 | Effective row degree distribution after truncation                        | For analysis / expected behavior            |                                                 |                        |
+| `L_j^{(s)} = sum_i O_{ij}^{(s)}`                | Column load for Monte-Carlo sample `s`                                    | `sample_many()`                             |                                                 |                        |
+| `μ_j = (1/M) * sum_s L_j^{(s)}`                 | Mean column load across Monte-Carlo samples                               | `monte_carlo_stats()`                       |                                                 |                        |
+| `σ_j^2 = Var(L_j^{(s)})`                        | Variance of column loads                                                  | `monte_carlo_stats()`                       |                                                 |                        |
+| `Q_{p,j}`                                       | p-th percentile of column load                                            | `estimate_expert_capacity()`                |                                                 |                        |
+| `Global Skew = max_j μ_j / ((1/N) * sum_j μ_j)` | Load imbalance metric for MoE routing                                     | `suggest_k_for_balance()`                   |                                                 |                        |
+
+---
+
 ## Assumptions
 
 The construction assumes that row and column degrees are “well spread” and not adversarial.
