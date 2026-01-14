@@ -7,13 +7,7 @@ The Phase Router implements a **seed-controlled phase-space mixing operator** th
 It is best understood as a **randomized convolution in cyclic phase space**: row-degree mass from two sides is embedded on a ring, independently mixed by permutations and phase shifts, and intersected to produce a sparse routing whose first-order statistics match the expected-degree law of a Chung–Lu bipartite model.
 
 Unlike Chung–Lu, this is not an independent-edge sampler.
-It is a **constructive seed-randomized deterministic transport operator** implemented entirely with:
-
-```
-bitwise AND, shifts, popcount, and permutations
-```
-
-making it cache-efficient, SIMD-friendly, and fully reproducible.
+It is a **constructive seed-randomized deterministic transport operator** implemented entirely with bitwise AND, shifts, popcount, and permutations, making it cache-efficient, SIMD-friendly, and fully reproducible.
 
 ---
 

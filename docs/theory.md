@@ -67,14 +67,17 @@ E[O_{ij}] = (s_i * t_j) / N.
 After left-aligning rows so that each row’s 1-bits are contiguous, each row `i` is cyclically shifted by
 
 ```
-φ_i = sum_{r < i} s_r
+φ_i = \sum_{m < i} s_{\pi(m)}
+
 ```
+
+where π is a fixed, seed-dependent permutation of rows.
 
 This assigns every 1-bit a global **phase** on a ring of size `N` and wraps it around the columns.
 
 As a result, row `i` occupies a contiguous arc of length `s_i` on the phase ring, producing a **low-discrepancy, equidistributed placement** of mass across columns while preserving row sums.
 
-Offsets are accumulated in a **randomly permuted row order**, so these arcs behave like random intervals on the phase circle.
+Offsets are accumulated in a fixed but seed-dependent permuted row order. This induces quasi-random, low-discrepancy phase placements rather than independent random intervals.
 
 ---
 
