@@ -29,7 +29,13 @@ from src.router_stats import (
 
 def generate_moe_matrices(num_experts: int, tokens_per_batch: int, expert_size: int = 128) -> tuple:
     """
-    Generate realistic MoE matrices.
+    Generate structured MoE-style routing marginals.
+
+    Note:
+    This constructs S and T as degree-constrained binary matrices
+    with block structure to simulate expert partitioning.
+    The Phase Router does not interpret semantics; all structure
+    is induced solely through S and T.
 
     Args:
         num_experts: Number of experts in the MoE layer
@@ -46,7 +52,9 @@ def generate_moe_matrices(num_experts: int, tokens_per_batch: int, expert_size: 
     # Create S: tokens -> expert vocabulary (sparse)
     S = np.zeros((N, N), dtype=np.uint8)
 
-    # Each token connects to a few experts' vocabulary
+    # Each token activates a sparse subset of target indices
+    # (interpreted here as expert-associated indices)
+
     experts_per_token = max(3, min(5, num_experts // 4))  # 3-5 experts
     vocab_per_expert = N // num_experts  # Vocabulary size per expert
 
