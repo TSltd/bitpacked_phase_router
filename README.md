@@ -1,32 +1,181 @@
 # **Bit-Packed Phase Router**
 
-A **high-performance C++ / Python library** for building **balanced, collision-free bipartite routings** between large sparse binary matrices.
+Phase-Packed Degree-Constrained Bipartite Transport
 
-It implements a **deterministic, bit-parallel sampler** for a **degree-capped Chung–Lu bipartite graph** using cyclic phase mixing and permutations.
+Cyclic Phase Intersection Router
 
-Designed for:
+Bitwise Phase-Coupled Transport Operator
 
-- Mixture-of-Experts (MoE)
-- Sparse attention
-- Load-balanced fan-out
-- Large bipartite graph coupling
-- Stochastic routing at scale
+A **high-performance C++ / Python library** for constructing **balanced, randomly mixed bipartite routings** using only **deterministic bitwise operations and permutations**.
 
-All computation is **bit-packed** (64 bits per word) and uses only:
+The Phase Router implements a **seed-controlled phase-space mixing operator** that converts two degree-specified binary matrices into a sparse bipartite coupling with **no geometric or phase-aligned bias**.
+
+It is best understood as a **randomized convolution in cyclic phase space**: row-degree mass from two sides is embedded on a ring, independently mixed by permutations and phase shifts, and intersected to produce a sparse routing whose first-order statistics match the expected-degree law of a Chung–Lu bipartite model.
+
+Unlike Chung–Lu, this is not an independent-edge sampler.
+It is a **constructive seed-randomized deterministic transport operator** implemented entirely with:
 
 ```
-AND, shifts, popcount, and permutations
+bitwise AND, shifts, popcount, and permutations
 ```
 
-making it memory-bandwidth limited, cache-efficient, and SIMD-friendly.
+making it cache-efficient, SIMD-friendly, and fully reproducible.
 
 ---
 
-### **CPU-First Design**
+## What this library does
 
-The Bit-Packed Phase Router is **designed for CPU execution** to leverage bit-parallel operations, cache-friendly access, and deterministic top-k routing.
+Given two binary matrices
 
-For a full discussion of why GPUs are not used, see [Why CPU (and not GPU)?](docs/why_cpu.md).
+```
+S, T ∈ {0,1}^(N×N)
+```
+
+with row sums
+
+```
+s_i = Σ_j S_ij ,   t_i = Σ_j T_ij
+```
+
+the router produces a sparse bipartite routing matrix `O` with at most `k` outputs per row by embedding both matrices into a **shared cyclic phase space** and intersecting them:
+
+```
+O = S' ∧ (T')^T
+```
+
+Here `S'` and `T'` are **degree-preserving, randomly phase-mixed transforms** of the original matrices.
+
+The transformation consists of:
+
+• left-aligning all 1-bits in each row
+• randomly permuting rows
+• assigning each row a cumulative phase offset
+• applying independent column permutations
+• permuting and transposing `T`
+• intersecting the two packed fields
+• keeping only the first `k` matches per row
+
+All operations preserve row sums and use only deterministic bit-parallel primitives.
+
+---
+
+## Statistical meaning
+
+After phase mixing, each row becomes a uniformly random arc on a ring of size `N`.
+
+For large `N`, this implies
+
+```
+Pr[S'_ik = 1] ≈ s_i / N
+Pr[T'_jk = 1] ≈ t_j / N
+```
+
+so each output entry behaves like a randomized convolution:
+
+```
+E[O_ij] ≈ s_i · t_j / N
+```
+
+This matches the expected-degree law of a Chung–Lu bipartite model, but the joint distribution is completely different: edges arise from structured phase overlap, not independent Bernoulli trials — they arise from structured overlap of two phase-mixed fields.
+
+The router therefore implements a **low-discrepancy randomized coupling**, not a probabilistic graph sampler.
+
+---
+
+## Guarantees
+
+The Phase Router provides the following guarantees:
+
+### 1. Hard fan-out bound
+
+Each source row produces at most `k` outputs:
+
+```
+Σ_j O_ij ≤ k
+```
+
+This is enforced deterministically.
+
+---
+
+### 2. Degree-weighted load
+
+Seed-averaged column load is proportional to target weights:
+
+```
+E[c_j] ∝ t_j ,   where  c_j = Σ_i O_ij
+```
+
+Targets with higher demand receive more routes on average.
+
+---
+
+### 3. No geometric bias
+
+Because all arcs are phase-shifted and permuted, no column can become a hotspot due to:
+
+• input ordering
+• contiguous structure
+• phase alignment
+• adversarial layout
+
+Any load variation is statistical, not algorithmic.
+
+---
+
+### 4. Randomized mixing
+
+The output distribution depends only on:
+
+• the degree sequences `{s_i}`, `{t_j}`
+• the random seed
+
+not on matrix geometry.
+
+---
+
+### 5. Deterministic reproducibility
+
+For a fixed seed, identical inputs produce identical routings.
+This supports reproducible experiments and Monte-Carlo evaluation over random phase embeddings.
+
+---
+
+## Why this is useful
+
+In MoE, sparse attention, and large-scale routing, we must map many sources to many targets while:
+
+• respecting capacity
+• avoiding hotspots
+• preventing feedback loops
+• staying fast
+
+Most systems rely on learned gates, hashing, or greedy balancing.
+The Phase Router instead produces a **random-like bipartite coupling by construction**, using only deterministic transforms.
+
+It gives you:
+
+• degree-weighted load
+• bounded fan-out
+• no coordination
+• no training
+• no geometry leaks
+
+Unlike flow-based or b-matching approaches, the Phase Router does not solve a global optimization problem; it implements a fast randomized transport with predictable first-order statistical behavior.
+
+---
+
+## CPU-first design
+
+The Phase Router is optimized for CPUs because it is:
+
+• memory-bandwidth limited
+• permutation heavy
+• branchy
+• bit-parallel
+
+It maps naturally to cache-coherent SIMD hardware.
+GPUs are not required and often underperform for this workload.
 
 ---
 
@@ -73,73 +222,56 @@ python tests/phase_router_test.py
 
 ## What it computes
 
-Given two binary matrices:
+Given two binary matrices
 
 ```
 S, T ∈ {0,1}^(N×N)
 ```
 
-with row sums:
+with row sums
 
 ```
-s_i = Σ_j S_ij,    t_j = Σ_i T_ij
+s_i = Σ_j S_ij ,   t_i = Σ_j T_ij
 ```
 
-the router constructs up to **k routes per row** by computing:
+the router constructs up to **k routes per row** by embedding both matrices into a **shared cyclic phase space** and intersecting them:
 
 ```
 O = S' ∧ (T')^T
 ```
 
-where `S'` and `T'` are **independently phase-mixed and permuted degree-preserving transforms** of the inputs.
+where `S'` and `T'` are **degree-preserving, seed-randomized, deterministic phase-mixed transforms** of the original inputs.
 
-For large `N`:
+The construction works as follows:
 
-```
-E[O_ij] ≈ s_i * t_j / N
-```
+- Each row is converted into a **contiguous arc** of length `s_i` (for `S`) or `t_i` (for `T`) on a ring of size `N`
+- The arcs are **randomly permuted and phase-shifted** using cumulative sums and permutations
+- The two embedded fields are then **intersected bitwise**
+- For each row, only the first `k` intersections are kept
 
-Thus the router samples a **Chung–Lu (configuration-model) bipartite graph** with:
-
-- Larger `s_i` → more outgoing routes
-- Larger `t_j` → more incoming load
-
-subject to a **hard fan-out cap (k) per source row**.
+This produces a sparse bipartite coupling whose statistics depend only on the row-sum sequences `{s_i}` and `{t_j}` and on the random seed.
 
 ---
 
-## Guarantees
+## Statistical meaning
 
-The output satisfies:
+After phase mixing, each row occupies a uniformly random arc on the ring.
+For large `N`, this implies
 
-- Expected row sums scale with `s_i`
-- Expected column sums scale with `t_j`
-- Collisions are uniformly distributed
-- No column becomes a geometric or phase-aligned hotspot
-- Fan-out per row is bounded by `k`
+```
+Pr[S'_iℓ = 1] ≈ s_i / N
+Pr[T'_jℓ = 1] ≈ t_j / N
+```
 
-The degrees are preserved **in expectation**, not exactly per realization.
+so the intersection behaves like a randomized convolution:
 
----
+```
+E[O_ij] ≈ s_i · t_j / N
+```
 
-## Why this is useful
+This matches the **first-moment structure** of a Chung–Lu bipartite model, but **the edges are not independent** — they are produced by structured phase interactions.
 
-In MoE, sparse attention, and distributed routing, we need to map many sources to many targets while:
-
-- Respecting capacity
-- Avoiding hotspots
-- Avoiding feedback loops
-- Keeping runtime cost low
-
-Most routers rely on:
-
-- Hashing
-- Learned softmax gates
-- Greedy balancing
-
-These are unstable, require training, or need coordination.
-
-The Phase Router instead produces a **random-like bipartite graph by construction**, using only deterministic transforms and bitwise operations.
+The router therefore implements a **low-discrepancy randomized coupling**, not an independent-edge sampler.
 
 ---
 
@@ -175,13 +307,13 @@ s_i = Σ_j S_ij,    t_j = Σ_i T_ij
 ### **4. Column Permutations**
 
 - Apply **independent column permutations** to `S` and `T`
-- Preserves column sums while destroying geometric correlations
+- Preserve row histograms embedded into a ring
 
 ### **5. Extra Row Permutation for T & Transpose**
 
 - Permute rows of `T` before transposing
 - After transpose, optionally apply column permutation
-- Ensures statistical independence between `S'` and `T'`
+- Ensures two correlated random tilings of a ring
 
 ### **6. Bitwise AND & Top-k Extraction**
 
@@ -212,11 +344,13 @@ E[O_ij] ≈ s_i * t_j / N
 Column loads:
 
 ```
-O_j = Σ_i O_ij ≈ Poisson(|S| * t_j / N)
+E[Oj​]=i∑​E[Oij​]=i∑​Nsi​tj​​=Ntj​​i∑​si​=N∣S∣tj​​
 ```
 
-- Truncated by the **per-row k-cap**
-- No hotspots, clusters, or stripes → visually a **starfield**
+• Asymptotically degree-weighted
+• Weakly correlated across rows
+• More regular (lower variance) than independent Chung–Lu sampling
+• Truncated by the per-row k-cap
 
 ---
 
@@ -233,11 +367,30 @@ O_j = Σ_i O_ij ≈ Poisson(|S| * t_j / N)
 
 ---
 
+### **Comparison with Chung–Lu**
+
+Chung–Lu is a **probability model**.
+The phase router is a **constructive transport operator**.
+
+It does not sample edges — it **flows mass through phase space**.
+
+That gives:
+
+| Chung–Lu           | Phase Router           |
+| ------------------ | ---------------------- |
+| Random graph       | Randomized transport   |
+| Independent edges  | Structured convolution |
+| No caps            | Hard k-cap             |
+| No reproducibility | Seed-deterministic     |
+| No geometry        | Explicit phase mixing  |
+
+---
+
 ### **Practical Formulas**
 
 ```
 Row sum:       r_i = Σ_j O_ij  ≤ k
-Column sum:    c_j = Σ_i O_ij ≤ t_j
+Column sum:    E[cj​]∝tj​
 Fill ratio:    fill = (total active routes) / (N * k)
 Load balance:  max(c_j) / mean(c_j)
 ```
@@ -290,49 +443,88 @@ route_packed_with_stats(...)
 
 ---
 
-## Statistical Analysis & Monte-Carlo Utilities
+## Statistical Analysis & Seed-Ensemble Evaluation
 
-The router implements a **Monte-Carlo transport operator** that samples random feasible couplings given degree marginals and sparsity constraints. For practical deployment, we provide statistical utilities in `src/router_stats.py`:
+The Phase Router is a seed-randomized deterministic transport operator.
+All statistical analysis is therefore performed over an ensemble of random phase embeddings, not over independently sampled graphs.
 
-### Monte-Carlo Sampling with Theoretical Baseline
+Each run corresponds to:
+
+- fixed inputs (S, T, k)
+
+- a fixed seed
+
+- a deterministic routing outcome O(seed)
+
+Statistical quantities are defined as seed-averaged properties of this operator.
+
+For practical deployment, we provide statistical utilities in `src/router_stats.py`:
+
+### Seed-Ensemble Statistics with Expected-Degree Baseline
 
 ```python
 from router_stats import monte_carlo_stats
 
-# Get comprehensive statistics with Chung–Lu theoretical baseline
+# Evaluate statistics over random phase embeddings
 stats = monte_carlo_stats(S, T, k=32, num_samples=50)
-print(f"Expected max load: {np.max(stats['mean_load']):.1f}")
-print(f"95th percentile: {np.max(stats['p95_load']):.1f}")
-print(f"Global skew: {stats['global_skew']:.2f}")
-print(f"Theoretical bias: {np.linalg.norm(stats['bias']):.2f}")
-print(f"Relative error: {np.mean(np.abs(stats['relative_error'])):.3f}")
+
+print(f"Seed-averaged max load: {np.max(stats['mean_load']):.1f}")
+print(f"95th percentile over seeds: {np.max(stats['p95_load']):.1f}")
+print(f"Global skew (mean): {stats['global_skew']:.2f}")
+print(f"Bias vs expected-degree baseline: {np.linalg.norm(stats['bias']):.2f}")
+print(f"Mean relative error: {np.mean(np.abs(stats['relative_error'])):.3f}")
+
 ```
 
-### Capacity Planning for MoE with Tail Risk
+Here:
+
+- mean_load[j] is the average column load across seeds
+
+- p95_load[j] estimates tail risk over random embeddings
+
+- bias[j] measures deviation from the expected-degree baseline
+  k · t_j / ∑ t
+
+No assumption of independent edges is made.
+
+### Capacity Planning via Seed-Level Tail Risk
 
 ```python
 from router_stats import estimate_expert_capacity
 
-# Determine capacity requirements with confidence intervals
 capacity = estimate_expert_capacity(S, T, k=32, confidence=0.99)
-print(f"99th percentile capacity: {np.max(capacity['required_capacity'])}")
-print(f"Mean capacity: {np.mean(capacity['mean_capacity']):.1f}")
-print(f"Utilization: {np.mean(capacity['utilization'])*100:.1f}%")
-print(f"Headroom needed: {np.mean(capacity['headroom']):.1f}")
+
+print(f"99th percentile required capacity: {np.max(capacity['required_capacity'])}")
+print(f"Mean utilization: {np.mean(capacity['utilization']) * 100:.1f}%")
+print(f"Average headroom: {np.mean(capacity['headroom']):.1f}")
+
 ```
 
-### Optimal Parameter Search with Binary Search
+### Parameter Search over Seed-Averaged Behavior
 
 ```python
 from router_stats import suggest_k_for_balance
 
-# Find minimal k for desired load balance (10-30x faster with binary search)
 result = suggest_k_for_balance(S, T, target_skew=1.5, verbose=True)
+
 print(f"Recommended k: {result['recommended_k']}")
-print(f"Achieved skew: {result['achieved_skew']:.2f}")
-print(f"Evaluations: {result['num_evaluations']} (binary search efficiency)")
-print(f"Success: {'Yes' if result['success'] else 'No'}")
+print(f"Achieved seed-averaged skew: {result['achieved_skew']:.2f}")
+print(f"Number of evaluations: {result['num_evaluations']}")
 ```
+
+This finds the smallest k such that load balance holds uniformly across random phase embeddings, not just in expectation.
+
+### Interpretation
+
+- Randomness enters only through phase embeddings
+
+- Outputs are deterministic given a seed
+
+- Statistics measure robustness to embedding randomness
+
+- Variance reflects transport regularity, not sampling noise
+
+This is fundamentally different from Monte-Carlo graph sampling and more appropriate for systems deployment, where reproducibility and worst-case behavior matter.
 
 ### Comprehensive Analysis with Theoretical Density
 
@@ -354,7 +546,7 @@ for result in analysis['analysis_results']:
 
 ### **Theoretical Rigor**
 
-- **Chung–Lu expectation baseline**: `ideal_mean = k * T.sum(axis=0) / T.sum()`
+- **Expected-degree baseline**: `| ideal_mean[j] | k·t_j/∑t | Expected-degree load baseline |`
 - **Bias and error metrics**: Compare empirical results to theoretical predictions
 - **Proper statistical naming**: `temporal_skew` vs `global_skew`, `edge_density` vs `theoretical_density`
 
@@ -372,15 +564,15 @@ for result in analysis['analysis_results']:
 
 ## Statistical Metrics Reference
 
-| Metric                | Formula                        | Interpretation                   |
-| --------------------- | ------------------------------ | -------------------------------- |
-| `mean_load[j]`        | E[L_j]                         | Expected load on column j        |
-| `ideal_mean[j]`       | k·t_j/∑t                       | Theoretical Chung–Lu expectation |
-| `bias[j]`             | mean_load[j] - ideal_mean[j]   | Deviation from theory            |
-| `global_skew`         | max(mean_load)/mean(mean_load) | MoE overload risk                |
-| `temporal_skew[j]`    | max(L_j)/mean(L_j)             | Per-column variability           |
-| `edge_density`        | ∑mean_load/(N²)                | Empirical sparsity               |
-| `theoretical_density` | k/N                            | Expected sparsity                |
+| Metric                | Formula                        | Interpretation                           |
+| --------------------- | ------------------------------ | ---------------------------------------- |
+| `mean_load[j]`        | E[L_j]                         | Expected load on column j                |
+| `ideal_mean[j]`       | k·t_j/∑t                       | Expected-degree baseline (seed-averaged) |
+| `bias[j]`             | mean_load[j] - ideal_mean[j]   | Deviation from theory                    |
+| `global_skew`         | max(mean_load)/mean(mean_load) | MoE overload risk                        |
+| `temporal_skew[j]`    | max(L_j)/mean(L_j)             | Per-column variability                   |
+| `edge_density`        | ∑mean_load/(N²)                | Empirical sparsity                       |
+| `theoretical_density` | k/N                            | Expected sparsity                        |
 
 ## Research Applications
 
@@ -392,7 +584,7 @@ These utilities enable **research-grade analysis** of stochastic routing:
 4. **Capacity Planning**: Determine expert sizes with confidence intervals
 5. **Convergence Studies**: Analyze how routing quality improves with k
 
-All functions maintain the router's core design as a **Monte-Carlo transport operator** while adding rigorous statistical analysis capabilities.
+All functions maintain the router's core design as a **seed-ensemble transport operator** while adding rigorous statistical analysis capabilities.
 
 ---
 
@@ -401,7 +593,7 @@ All functions maintain the router's core design as a **Monte-Carlo transport ope
 This is:
 
 - A deterministic degree-weighted mixing operator
-- A fast Chung–Lu bipartite sampler
+- A fast expected-degree bipartite transport operator
 - A scalable routing primitive with hard fan-out limits
 
 This is **not**:
@@ -409,6 +601,12 @@ This is **not**:
 - A learned router
 - A greedy load balancer
 - A hash
+
+---
+
+## Adversarial Inputs
+
+This is not a cryptographic primitive. The Phase Router assumes benign or random-like degree inputs and produces deterministic, reproducible routings for a fixed seed. If the seed is known, an adversary could construct inputs S and T that correlate with the internal permutations, affecting statistical mixing. The router's guarantees apply only in non-adversarial or stochastic settings.
 
 ---
 
@@ -438,25 +636,24 @@ Empirical performance and load-balance results are documented in [`evaluation.md
 
 Some mathematical expressions are written in **plain-text Markdown-friendly form**. Here’s a quick reference:
 
-| Symbol / Expression                         | Meaning                                                                                 |     |     |
-| ------------------------------------------- | --------------------------------------------------------------------------------------- | --- | --- |
-| `S, T ∈ {0,1}^(N×N)`                        | Binary source and target matrices of size N×N                                           |     |     |
-| `s_i = Σ_j S_ij`                            | Row sum of source matrix row i                                                          |     |     |
-| `t_j = Σ_i T_ij`                            | Column sum of target matrix column j                                                    |     |     |
-| `O = S' ∧ (T')^T`                           | Output routing matrix via bitwise AND of phase-mixed `S'` and transposed `T'`           |     |     |
-| `E[O_ij] ≈ s_i * t_j / N`                   | Expected value of each output bit; approximates Chung–Lu configuration-model statistics |     |     |
-| `Pr(S'_ik = 1)`                             | Probability that the k-th bit of row i in `S'` is set                                   |     |     |
-| `O_j = Σ_i O_ij ≈ Poisson(\|S\| * t_j / N)` | Approximate column load distribution, Poisson with mean proportional to `t_j`           |
-
-| `φ_i^S = Σ_{r<i} s_r` | Phase offset for row i in `S` (cumulative sum for barrel-shifting) | | |
-| `fill = (total active routes) / (N * k)` | Fill ratio: fraction of possible routes that are active | | |
-| `max(c_j) / mean(c_j)` | Load balance ratio across columns | | |
+| Symbol / Expression                      | Meaning                                                                                                        |     |     |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- | --- | --- |
+| `S, T ∈ {0,1}^(N×N)`                     | Binary source and target matrices of size N×N                                                                  |     |     |
+| `s_i = Σ_j S_ij`                         | Row sum of source matrix row i                                                                                 |     |     |
+| `t_j = Σ_i T_ij`                         | Column sum of target matrix column j                                                                           |     |     |
+| `O = S' ∧ (T')^T`                        | Output routing matrix via bitwise AND of phase-mixed `S'` and transposed `T'`                                  |     |     |
+| `E[O_ij] ≈ s_i * t_j / N`                | Expected value of each output bit; approximates the expected-degree law of Chung–Lu, not its edge distribution |     |     |
+| `Pr(S'_ik = 1)`                          | Probability that the k-th bit of row i in `S'` is set                                                          |     |     |
+| `O_j = Σ_i O_ij`                         | Column load induced by structured phase overlap (not an independent-edge model)                                |
+| `φ_i^S = Σ_{r<i} s_r`                    | Phase offset for row i in `S` (cumulative sum for barrel-shifting)                                             |     |     |
+| `fill = (total active routes) / (N * k)` | Fill ratio: fraction of possible routes that are active                                                        |     |     |
+| `max(c_j) / mean(c_j)`                   | Load balance ratio across columns                                                                              |     |     |
 
 **Notes:**
 
 - All summations (`Σ`) are over integers and are implemented efficiently with **bit-packed operations** in code.
 - Bitwise AND (`∧`) represents the intersection of source and target arcs in the phase-spread matrices.
-- Poisson approximation is valid for **large N**, before applying the hard cap `k` per row.
+- For large N and moderate k, column loads concentrate around their expected-degree baseline, with lower variance than independent Chung–Lu sampling due to negative correlations induced by phase packing and hard caps.
 - All formulas are **illustrative**; the actual code performs these operations **in packed 64-bit words** using CPU bitwise instructions.
 
 ---

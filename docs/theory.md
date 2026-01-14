@@ -2,7 +2,13 @@
 
 ## Abstract
 
-We present a deterministic construction that maps two binary matrices with prescribed row and column sums into a mixed bipartite coupling whose local statistics converge to those of a random **configuration-model (Chung–Lu)** bipartite graph. The construction uses phase-based dispersal followed by global permutations and supports an efficient bit-packed implementation with bounded fan-out.
+We present a deterministic construction that maps two binary matrices with prescribed row and column sums into a mixed bipartite coupling whose local statistics match the first-order expected-degree statistics of a Chung–Lu bipartite graph, but the edge dependencies are structured, not independent. The construction uses phase-based dispersal followed by global permutations and supports an efficient bit-packed implementation with bounded fan-out. While Monte-Carlo statistics are used to evaluate robustness, the construction is deterministic given a seed; randomness enters only through phase embeddings.
+
+---
+
+## Assumptions
+
+The construction assumes that row and column degrees are “well spread” and not adversarial.
 
 ---
 
@@ -10,41 +16,41 @@ We present a deterministic construction that maps two binary matrices with presc
 
 Let
 
-[
-S, T \in {0,1}^{N \times N}
-]
+```
+S, T ∈ {0,1}^{N × N}
+```
 
 with row sums
 
-[
-s_i = \sum_j S_{ij}, \qquad t_j = \sum_i T_{ij}.
-]
+```
+s_i = sum_j S_{ij},   t_j = sum_i T_{ij}.
+```
 
-We wish to construct a routing matrix (O) such that:
+We wish to construct a routing matrix `O` such that:
 
-- total flow from source row (i) scales with (s_i),
-- total flow into target column (j) scales with (t_j),
+- total flow from source row `i` scales with `s_i`,
+- total flow into target column `j` scales with `t_j`,
 - all other structure is maximally mixed.
 
 This corresponds to sampling from a **maximum-entropy bipartite graph with fixed expected degrees**, i.e., the **Chung–Lu / configuration model**, where
 
-[
-\mathbb{E}[O_{ij}] = \frac{s_i t_j}{N}.
-]
+```
+E[O_{ij}] = (s_i * t_j) / N.
+```
 
 ---
 
 ## 2. Phase Spreading
 
-After left-aligning rows so that each row’s 1-bits are contiguous, each row (i) is cyclically shifted by
+After left-aligning rows so that each row’s 1-bits are contiguous, each row `i` is cyclically shifted by
 
-[
-\phi_i = \sum_{r < i} s_r.
-]
+```
+φ_i = sum_{r < i} s_r
+```
 
-This assigns every 1-bit a global **phase** on a ring of size (N) and wraps it around the columns.
+This assigns every 1-bit a global **phase** on a ring of size `N` and wraps it around the columns.
 
-As a result, row (i) occupies a contiguous arc of length (s_i) on the phase ring, producing a **low-discrepancy, equidistributed placement** of mass across columns while preserving row sums.
+As a result, row `i` occupies a contiguous arc of length `s_i` on the phase ring, producing a **low-discrepancy, equidistributed placement** of mass across columns while preserving row sums.
 
 Offsets are accumulated in a **randomly permuted row order**, so these arcs behave like random intervals on the phase circle.
 
@@ -52,92 +58,100 @@ Offsets are accumulated in a **randomly permuted row order**, so these arcs beha
 
 ## 3. Global Permutations
 
-A shared global permutation of rows is applied to both (S) and (T), followed by **independent column permutations**. These operations preserve:
+A shared global permutation of rows is applied to both `S` and `T`, followed by **independent column permutations**. These operations preserve:
 
 - row sums,
 - column sums,
 
 while destroying geometric and index-based correlations introduced by alignment and phase spreading.
 
-Before transposition, an **additional independent row permutation** is applied to (T), ensuring that (S) and (T) become **independently mixed degree-preserving fields** in the shared phase space.
+Before transposition, an **additional independent row permutation** is applied to `T`, ensuring that `S` and `T` become **independently mixed degree-preserving fields** in the shared phase space.
 
 ---
 
 ## 4. Intersection Model
 
-After transposing the mixed (T), routing is computed as
+After transposing the mixed `T`, routing is computed as:
 
-[
-O_{ij} = \sum_{k=1}^{N} S'*{ik} \wedge T'*{jk}.
-]
+```
+O_{ij} = sum_{k=1}^{N} (S'_{ik} ∧ T'_{jk})
+```
 
-For any fixed pair ((i,j)), this is equivalent to a **sum of weakly dependent Bernoulli variables**. After phase spreading and independent permutations:
+For any fixed pair `(i,j)`, this is equivalent to a **sum of weakly dependent Bernoulli variables**. Correlations are small due to low-discrepancy phase packing and random permutations. After phase spreading and independent permutations:
 
-[
-\Pr(S'*{ik}=1) = \frac{s_i}{N}, \qquad \Pr(T'*{jk}=1) = \frac{t_j}{N},
-]
+```
+Pr(S'_{ik} = 1) = s_i / N,   Pr(T'_{jk} = 1) = t_j / N
+```
 
-and these events are asymptotically independent across (k). Therefore:
+and these events are asymptotically independent across `k`. Therefore:
 
-[
-\mathbb{E}[O_{ij}] = \sum\_{k=1}^{N} \frac{s_i}{N}\frac{t_j}{N} = \frac{s_i t_j}{N}.
-]
+```
+E[O_{ij}] = sum_{k=1}^{N} (s_i / N) * (t_j / N) = (s_i * t_j) / N
+```
 
-Thus each potential edge behaves as a Bernoulli variable with probability (p\_{ij} = s_i t_j / N), matching the **Chung–Lu / configuration-model limit**.
+Thus each potential edge behaves as a Bernoulli variable with probability
+
+```
+p_{ij} = (s_i * t_j) / N,
+```
+
+matching the **Chung–Lu / configuration-model limit**.
 
 ---
 
 ## 5. Poisson Limit
 
-Define the total load on column (j) as
+Define the total load on column `j` as:
 
-[
-O_j = \sum_i O_{ij}.
-]
+```
+O_j = sum_i O_{ij}.
+```
 
-Since (O\_{ij}) is a sum of many small, weakly dependent Bernoulli variables:
+Since `O_{ij}` is a sum of many small, weakly dependent Bernoulli variables:
 
-[
-\mathbb{E}[O_j] = \sum_i \frac{s_i t_j}{N} = \frac{t_j}{N} \sum_i s_i = \frac{|S| , t_j}{N},
-]
+```
+E[O_j] = sum_i (s_i * t_j) / N = (t_j / N) * sum_i s_i = (|S| * t_j) / N
+```
 
-where (|S| = \sum_i s_i) is the total mass in (S).
+where `|S| = sum_i s_i` is the total mass in `S`.
 
 When degrees are well spread:
 
-[
-O_j \sim \text{Poisson}!\left(\frac{|S| , t_j}{N}\right).
-]
+```
+O_j ~ Poisson(|S| * t_j / N)
+```
 
-If the target degrees (t_j) are approximately uniform:
+If the target degrees `t_j` are approximately uniform:
 
-[
-O_j \sim \text{Poisson}!\left(\frac{|S| , |T|}{N^2}\right).
-]
+```
+O_j ~ Poisson(|S| * |T| / N^2)
+```
+
+This approximation holds for large `N` and moderate degrees; truncation by `k` introduces slight negative correlations.
 
 This Poisson behavior explains the absence of hotspots and the uniform “starfield” appearance of the routing matrix.
 
 ---
 
-## 5.5 Fan-Out Truncation
+## 6. Fan-Out Truncation
 
-In the implementation, each source row emits at most (k) matches. Let (\tilde O\_{ij}) denote the uncapped Chung–Lu variable from Section 4. The realized routing is:
+In the implementation, each source row emits at most `k` matches. Let `tilde O_{ij}` denote the uncapped Chung–Lu variable from Section 4. For each row `i`, keep only the first `k` intersections; additional matches are discarded:
 
-[
-O_{ij} = \tilde O_{ij} \cdot \mathbf{1}\Big(\sum_j \tilde O_{ij} \le k\Big),
-]
+```
+O_{ij} = min(tilde O_{ij}, k)   where sum_j O_{ij} ≤ k
+```
 
-or equivalently, using a min-truncation:
+or equivalently:
 
-[
-O_{ij} = \min\big(\tilde O_{ij}, k\big).
-]
+```
+O_{ij} = min(tilde O_{ij}, k)
+```
 
 Thus the row degree distribution satisfies:
 
-[
-\deg(i) \sim \min(\text{Poisson}(s_i), k),
-]
+```
+deg(i) ~ min(Poisson(s_i), k)
+```
 
 and column loads remain Poisson-like but are mildly truncated by this per-row capacity constraint.
 
@@ -145,7 +159,7 @@ This enforces **bounded fan-out** while preserving Chung–Lu statistics in the 
 
 ---
 
-## 6. Interpretation
+## 7. Interpretation
 
 The full pipeline implements a **measure-preserving mixing transform** on binary matrices:
 
@@ -158,7 +172,7 @@ Result: a **deterministic, bit-parallel approximation to a random bipartite conf
 
 ---
 
-## 7. Why This is Useful
+## 8. Why This is Useful
 
 This construction produces:
 
@@ -175,30 +189,30 @@ without learning, hashing, greedy balancing, or coordination. Ideal for **large-
 
 The bit-packed phase router implements a **Chung–Lu–style stochastic sampler**:
 
-- **Input:** (S, T, k)
-- **Output:** Random sparse bipartite graph (O^{(s)}) per seed (s)
+- **Input:** `(S, T, k)`
+- **Output:** Random sparse bipartite graph `O^{(s)}` per seed `s`
 
-[
-O_{ij}^{(s)} \in {0,1}, \quad \sum_j O_{ij}^{(s)} \le k
-]
+```
+O_{ij}^{(s)} ∈ {0,1},   sum_j O_{ij}^{(s)} ≤ k
+```
 
 Routes are ephemeral; **only induced column loads matter**:
 
-[
-L_j^{(s)} = \sum_i O_{ij}^{(s)}
-]
+```
+L_j^{(s)} = sum_i O_{ij}^{(s)}
+```
 
-Collecting (M) independent samples:
+Collecting `M` independent samples:
 
-[
-\mathbf{L}^{(1)}, \mathbf{L}^{(2)}, \dots, \mathbf{L}^{(M)}
-]
+```
+L^{(1)}, L^{(2)}, ..., L^{(M)}
+```
 
 we can estimate:
 
-- Mean: (\mu_j = \frac{1}{M} \sum_s L_j^{(s)})
-- Variance: (\sigma_j^2 = \text{Var}(L_j^{(s)}))
-- Tail risk: (Q\_{p,j} = \text{p-th percentile of } L_j^{(s)})
+- Mean: `μ_j = (1/M) * sum_s L_j^{(s)}`
+- Variance: `σ_j^2 = Var(L_j^{(s)})`
+- Tail risk: `Q_{p,j} = p-th percentile of L_j^{(s)}`
 
 ---
 
@@ -206,13 +220,13 @@ we can estimate:
 
 Ignoring the row-cap constraint:
 
-[
-\mathbb{E}[L_j] = k \cdot \frac{t*j}{\sum*\ell t\_\ell}
-]
+```
+E[L_j] = k * t_j / sum_l t_l
+```
 
 The phase router approximates this distribution, with deviations due to:
 
-- finite (k)
+- finite `k`
 - row capacity constraints
 - permutation heuristics
 - collision avoidance
@@ -223,9 +237,9 @@ Monte-Carlo sampling is the **correct way** to characterize its behavior.
 
 ### Global Load Imbalance (MoE Metric)
 
-[
-\text{Global Skew} = \frac{\max_j \mu_j}{\frac{1}{N} \sum_j \mu_j}
-]
+```
+Global Skew = max_j μ_j / ((1 / N) * sum_j μ_j)
+```
 
 - Perfectly balanced: skew = 1
 - Typical MoE systems: skew ≤ 1.5–2 to avoid stragglers
@@ -236,18 +250,18 @@ Monte-Carlo sampling is the **correct way** to characterize its behavior.
 
 Given Monte-Carlo samples, estimate expert capacity:
 
-[
-C_j(p) = \text{p-th percentile of } L_j^{(s)}
-]
+```
+C_j(p) = p-th percentile of L_j^{(s)}
+```
 
-Guarantee no overload with probability ≥ (p).
+Guarantee no overload with probability ≥ `p`.
 
 ---
 
 ### Flow Diagram (Monte-Carlo Sampling)
 
 ```
-S, T, k   ──► Phase Router ──► O^(s) ──► Column Loads L^(s)
+S, T, k, seed   ──► Phase Router ──► O^(seed) ──► Column Loads L^(seed)
      │                        │
      │                        └─► Repeat M seeds ─► Monte-Carlo statistics (mean, variance, skew, tail)
 ```
@@ -258,9 +272,9 @@ S, T, k   ──► Phase Router ──► O^(s) ──► Column Loads L^(s)
 
 | Function                   | Purpose                                     |
 | -------------------------- | ------------------------------------------- |
-| `sample_many`              | Draws (\mathbf{L}^{(s)}) samples            |
+| `sample_many`              | Draws L^{(s)} samples                       |
 | `monte_carlo_stats`        | Estimates mean, variance, percentiles, skew |
-| `suggest_k_for_balance`    | Finds minimal (k) achieving target skew     |
+| `suggest_k_for_balance`    | Finds minimal `k` achieving target skew     |
 | `estimate_expert_capacity` | Computes tail-risk capacity                 |
 
 These utilities **treat the router as a black-box sampler** and extract statistically meaningful quantities for system design.
