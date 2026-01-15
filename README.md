@@ -124,13 +124,13 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
 
    This preserves the phase offsets applied in Step 3 while preparing `T` for the intersection.
 
-7. **Bitwise Intersection & Top-k Extraction**
+7. **Bitwise Intersection & Seed-deterministic Randomized Top-k Extraction**
 
    ```
    O[i] = S_final[i] & T_final[i]
    ```
 
-   Bit-packed AND operations compute row-wise overlaps efficiently. Only the first `k` intersections per row are retained, enforcing a **hard fan-out bound**.
+   Only up to k intersections per row are retained. By default, these are chosen via seed-deterministic random selection among candidate overlaps, rather than always taking the top-k. This reduces column skew and distributes load more evenly, especially for small k, while hard fan-out bound is enforced. If fewer than k overlaps exist, the remaining slots are filled with -1.
 
 ---
 

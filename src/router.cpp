@@ -18,8 +18,8 @@
 #include <iomanip>
 #include <sstream>
 
-#define ROUTER_ENABLE_DUMP 0
-#define ROUTER_DUMP_INTERMEDIATE 0
+#define ROUTER_ENABLE_DUMP 1
+#define ROUTER_DUMP_INTERMEDIATE 1
 
 namespace py = pybind11;
 
@@ -188,7 +188,8 @@ static void phase_router_bitpacked(
     const uint64_t *col_perm_T,
     const uint64_t *row_perm_T, // global row perm for T
     int *routes,
-    const char *debug_prefix)
+    const char *debug_prefix,
+    uint64_t seed_base)
 
 {
     // -------------------- Step 1: Compute cumulative row offsets from ORIGINAL matrices --------------------
@@ -300,22 +301,37 @@ static void phase_router_bitpacked(
     for (size_t i = 0; i < N; i++)
     {
         size_t cnt = 0;
-
         const uint64_t *Srow = &S_final[i * NB_words];
         const uint64_t *Trow = &T_final[i * NB_words];
 
-        for (size_t w = 0; w < NB_words && cnt < k; w++)
+        // ----------------------
+        // Step A: Build a list of candidate bit indices
+        // ----------------------
+        std::vector<size_t> candidates;
+        for (size_t w = 0; w < NB_words; w++)
         {
             uint64_t m = Srow[w] & Trow[w];
-
-            while (m && cnt < k)
+            while (m)
             {
                 size_t b = __builtin_ctzll(m);
-                routes[i * k + cnt++] = w * WORD_BITS + b;
+                candidates.push_back(w * WORD_BITS + b);
                 m &= m - 1;
             }
         }
 
+        // ----------------------
+        // Step B: Shuffle candidates deterministically
+        // ----------------------
+        std::mt19937_64 rng(seed_base + i); // per-row deterministic seed
+        std::shuffle(candidates.begin(), candidates.end(), rng);
+
+        // ----------------------
+        // Step C: Take up to k
+        // ----------------------
+        for (cnt = 0; cnt < k && cnt < candidates.size(); cnt++)
+            routes[i * k + cnt] = candidates[cnt];
+
+        // Fill remainder with -1
         for (; cnt < k; cnt++)
             routes[i * k + cnt] = -1;
     }
@@ -566,7 +582,8 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
         col_perm_T.data(),
         row_perm_T.data(),
         (int *)routes_np.mutable_data(),
-        prefix.empty() ? nullptr : prefix.c_str());
+        prefix.empty() ? nullptr : prefix.c_str(),
+        seed_base);
 
     double t1_route = now_ms();
 
@@ -613,7 +630,7 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
     size_t N = S_bits_np.shape(0);
     size_t NB_words = S_bits_np.shape(1);
 
-    // Unpack numpy arrays into local vectors
+    // Copy numpy arrays into local vectors
     std::vector<uint64_t> S_bits(N * NB_words);
     std::vector<uint64_t> T_bits(N * NB_words);
     std::vector<uint64_t> row_perm(N);
@@ -621,7 +638,6 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
     std::vector<uint64_t> col_perm_T(N);
     std::vector<uint64_t> row_perm_T(N);
 
-    // Copy data from numpy arrays to local vectors
     std::memcpy(S_bits.data(), S_bits_np.data(), N * NB_words * sizeof(uint64_t));
     std::memcpy(T_bits.data(), T_bits_np.data(), N * NB_words * sizeof(uint64_t));
     std::memcpy(row_perm.data(), row_perm_np.data(), N * sizeof(uint64_t));
@@ -629,6 +645,28 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
     std::memcpy(col_perm_T.data(), col_perm_T_np.data(), N * sizeof(uint64_t));
     std::memcpy(row_perm_T.data(), row_perm_T_np.data(), N * sizeof(uint64_t));
 
+    // --------------------
+    // Determine deterministic seed
+    // --------------------
+    uint64_t seed_base = (seed == 0)
+                             ? std::chrono::high_resolution_clock::now().time_since_epoch().count()
+                             : seed;
+
+    // Shuffle row/column permutations deterministically
+    std::mt19937_64 rng_rows(seed_base ^ 0xA5A5A5A5A5A5A5A5ULL);
+    std::shuffle(row_perm.begin(), row_perm.end(), rng_rows);
+
+    std::mt19937_64 rng_Trows(seed_base ^ 0xC6BC279692B5C323ULL);
+    std::shuffle(row_perm_T.begin(), row_perm_T.end(), rng_Trows);
+
+    std::mt19937_64 rng_S(seed_base ^ 0x9E3779B97F4A7C15ULL);
+    std::mt19937_64 rng_T(seed_base ^ 0xD1B54A32D192ED03ULL);
+    std::shuffle(col_perm_S.begin(), col_perm_S.end(), rng_S);
+    std::shuffle(col_perm_T.begin(), col_perm_T.end(), rng_T);
+
+    // --------------------
+    // Run the core router
+    // --------------------
     double t0 = now_ms();
 
     phase_router_bitpacked(
@@ -640,35 +678,43 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
         col_perm_T.data(),
         row_perm_T.data(),
         (int *)routes_np.mutable_data(),
-        debug_prefix.empty() ? nullptr : debug_prefix.c_str());
+        debug_prefix.empty() ? nullptr : debug_prefix.c_str(),
+        seed_base); // <- pass scalar, not .data()
 
     double t1 = now_ms();
 
+    // --------------------
+    // Optional validation
+    // --------------------
     if (validate)
     {
-        validate_phase_router(S_bits_np.shape(0),
-                              k, // pass k here, not NB_words
-                              S_bits_np.shape(1),
-                              (uint64_t *)S_bits_np.data(),
-                              (uint64_t *)T_bits_np.data(),
-                              (uint64_t *)row_perm_np.data(),
-                              (uint64_t *)col_perm_S_np.data(),
-                              (uint64_t *)col_perm_T_np.data(),
-                              (uint64_t *)row_perm_T_np.data(),
-                              (int *)routes_np.mutable_data(),
-                              debug_prefix.empty() ? nullptr : debug_prefix.c_str());
+        validate_phase_router(
+            N, k, NB_words,
+            S_bits.data(),
+            T_bits.data(),
+            row_perm.data(),
+            col_perm_S.data(),
+            col_perm_T.data(),
+            row_perm_T.data(),
+            (int *)routes_np.mutable_data(),
+            debug_prefix.empty() ? nullptr : debug_prefix.c_str());
     }
 
+    // Count active routes
     size_t active = 0;
     for (size_t i = 0; i < N * k; i++)
         active += ((int *)routes_np.data())[i] != -1;
 
+    // --------------------
+    // Prepare Python dict output
+    // --------------------
     py::dict d;
     d["N"] = N;
     d["k"] = k;
     d["active_routes"] = active;
     d["routing_time_ms"] = t1 - t0;
     d["routes_per_row"] = double(active) / double(N);
+
     return d;
 }
 
@@ -754,7 +800,8 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
         col_perm_T.data(),
         row_perm_T.data(),
         (int *)routes_np.mutable_data(),
-        debug_prefix.empty() ? nullptr : debug_prefix.c_str());
+        debug_prefix.empty() ? nullptr : debug_prefix.c_str(),
+        seed_base);
 
     // Optional validation (fixed argument order)
     if (validate)
@@ -842,7 +889,8 @@ PYBIND11_MODULE(router, m)
           py::arg("col_perm_S"), py::arg("col_perm_T"),
           py::arg("row_perm_T"),
           py::arg("routes"),
-          py::arg("debug_prefix") = nullptr);
+          py::arg("debug_prefix") = nullptr,
+          py::arg("seed_base") = 0);
 
     m.def("pack_and_route", &pack_and_route,
           py::arg("S_np"),
