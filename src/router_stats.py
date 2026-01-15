@@ -16,7 +16,18 @@ samples random feasible couplings given degree marginals and sparsity constraint
 
 import numpy as np
 import warnings
+import sys
+import os
 from typing import Tuple, Dict, Optional, Union
+
+# Add the root directory to Python path so the router module can be found
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, root_dir)
+
+# Also add the src directory so router_py can be imported
+src_dir = os.path.dirname(os.path.abspath(__file__))
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
 
 # Import the router module
 try:

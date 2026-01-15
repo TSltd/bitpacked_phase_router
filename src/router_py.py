@@ -9,8 +9,13 @@ Provides interfaces for:
 - Optional conversion to index-based routing for MoE layers
 """
 
+import sys
+import os
 from typing import Optional
 import numpy as np
+
+# Add the root directory to Python path so the router module can be found
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import router  # pybind11 module
 

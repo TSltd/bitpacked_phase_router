@@ -64,33 +64,56 @@ E[O_{ij}] = (s_i * t_j) / N.
 
 ## 2. Phase Spreading
 
-After left-aligning rows so that each row’s 1-bits are contiguous, each row `i` is cyclically shifted by
+After left-aligning rows so that each row's 1-bits are contiguous, phase offsets are computed independently for S and T from their **original (unpermuted) row order**:
 
 ```
-φ_i = \sum_{m < i} s_{\pi(m)}
-
+φ_i^S = \sum_{r < i} s_r  (mod N)
+φ_i^T = \sum_{r < i} t_r  (mod N)
 ```
 
-where π is a fixed, seed-dependent permutation of rows.
+Each row `i` is then cyclically shifted by its respective offset:
+
+```
+S_rot[i] = RotateLeft(S[i], φ_i^S)
+T_rot[i] = RotateLeft(T[i], φ_i^T)
+```
 
 This assigns every 1-bit a global **phase** on a ring of size `N` and wraps it around the columns.
 
-As a result, row `i` occupies a contiguous arc of length `s_i` on the phase ring, producing a **low-discrepancy, equidistributed placement** of mass across columns while preserving row sums.
+As a result, row `i` occupies a contiguous arc of length `s_i` (for S) or `t_i` (for T) on the phase ring, producing a **low-discrepancy, equidistributed placement** of mass across columns while preserving row sums.
 
-Offsets are accumulated in a fixed but seed-dependent permuted row order. This induces quasi-random, low-discrepancy phase placements rather than independent random intervals.
+The cumulative offset computation from the original row order creates deterministic, structured phase placements. Randomization enters later through permutations in Step 3.
 
 ---
 
 ## 3. Global Permutations
 
-A shared global permutation of rows is applied to both `S` and `T`, followed by **independent column permutations**. These operations preserve:
+After phase spreading and **independent column permutations** are applied to `S_rot` and `T_rot`:
 
-- row sums,
-- column sums,
+```
+S_shuf = PermuteColumns(S_rot, col_perm_S)
+T_shuf = PermuteColumns(T_rot, col_perm_T)
+```
+
+where `col_perm_S` and `col_perm_T` are distinct seed-derived permutations.
+
+Next, **independent row permutations** are applied to both matrices:
+
+```
+S_final[i] = S_shuf[row_perm[i]]
+T_prepared[i] = T_shuf[row_perm_T[i]]
+```
+
+where `row_perm` and `row_perm_T` are also distinct seed-derived permutations.
+
+These operations preserve:
+
+- row sums (column permutations preserve row structure),
+- column sums (row permutations preserve column structure),
 
 while destroying geometric and index-based correlations introduced by alignment and phase spreading.
 
-Before transposition, an **additional independent row permutation** is applied to `T`, ensuring that `S` and `T` become **independently mixed degree-preserving fields** in the shared phase space.
+The independent permutations for S and T ensure they become **independently mixed degree-preserving fields** in the shared phase space, preventing systematic bias when their bitwise AND is computed after T is transposed.
 
 ---
 
