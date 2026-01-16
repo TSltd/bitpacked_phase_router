@@ -18,8 +18,8 @@
 #include <iomanip>
 #include <sstream>
 
-#define ROUTER_ENABLE_DUMP 1
-#define ROUTER_DUMP_INTERMEDIATE 1
+#define ROUTER_ENABLE_DUMP 0
+#define ROUTER_DUMP_INTERMEDIATE 0
 
 namespace py = pybind11;
 

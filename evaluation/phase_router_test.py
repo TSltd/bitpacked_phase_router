@@ -17,7 +17,8 @@ from typing import Dict, Tuple, List, Optional
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent / "src"))
+# Add project root to Python path
+sys.path.append(str(Path(__file__).parent.parent))
 
 import router
 
@@ -395,8 +396,8 @@ if __name__ == "__main__":
     print("Running quick test with N=256, k=32")
     
     metrics = run_single_test(
-        N=256,
-        k=32,
+        N=32000,
+        k=12800,
         seed_S=42,
         seed_T=123,
         dump_prefix="test_output/quick_test",
