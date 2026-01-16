@@ -12,6 +12,8 @@ import json
 from typing import Dict, Tuple, Optional
 import sys
 import argparse
+import csv
+
 
 
 # Add project root to Python path
@@ -37,6 +39,7 @@ def mem_gb() -> float:
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg} | RSS={mem_gb():.2f} GB", flush=True)
+
 
 
 # ============================================================================
@@ -365,62 +368,6 @@ def plot_column_loads(
         f"{prefix}__hash_router__N{N}__k{k}.png"
     )
 
-
-def plot_phase2_column_load(N, k, routes_phase, routes_hash, output_path=None):
-    def column_loads(routes):
-        col_counts = np.zeros(N, dtype=int)
-        for row in routes:
-            for c in row:
-                if c >= 0:
-                    col_counts[c] += 1
-        return col_counts
-
-    load_phase = column_loads(routes_phase)
-    load_hash = column_loads(routes_hash)
-
-    # Determine bin edges dynamically
-    max_load = max(load_phase.max(), load_hash.max())
-    bins = np.arange(0, max_load + 2) - 0.5
-
-    # Compute statistics for annotation
-    max_phase, skew_phase = load_phase.max(), load_phase.max() / (load_phase.mean() + 1e-9)
-    max_hash, skew_hash = load_hash.max(), load_hash.max() / (load_hash.mean() + 1e-9)
-
-    plt.figure(figsize=(10, 6))
-    plt.hist(load_phase, bins=bins, alpha=0.7, label='Phase Router', color='steelblue', log=True)
-    plt.hist(load_hash, bins=bins, alpha=0.5, label='Hash Router', color='crimson', log=True)
-
-    # Annotate Phase Router
-    plt.text(
-        max_phase, 10,  # y-position small enough for log scale
-        f'Max={max_phase}\nSkew={skew_phase:.2f}',
-        color='steelblue', fontsize=10, ha='right', va='bottom'
-    )
-
-    # Annotate Hash Router
-    plt.text(
-        max_hash, 10,
-        f'Max={max_hash}\nSkew={skew_hash:.2f}',
-        color='crimson', fontsize=10, ha='right', va='bottom'
-    )
-
-    plt.xlabel("Column load (number of incoming routes)")
-    plt.ylabel("Number of columns (log scale)")
-    plt.title(f"Phase 2 Column Load Distribution: N={N}, k={k}")
-    plt.legend()
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-
-    # Dynamic x-axis limits for clarity
-    x_min = 0
-    x_max = max(max_phase * 1.1, max_hash * 1.1)
-    plt.xlim(x_min, x_max)
-
-    if output_path:
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=300)
-        print(f"Figure saved to {output_path}")
-    plt.close()
-
 def plot_routing_time(results, output_path=None):
     ks = [r["k"] for r in results]
 
@@ -441,7 +388,7 @@ def plot_routing_time(results, output_path=None):
     if output_path:
         plt.tight_layout()
         plt.savefig(output_path, dpi=300)
-        print(f"Timing figure saved to {output_path}")
+        log(f"Timing figure saved to {output_path}")
     plt.close()
 
 def write_markdown_table(rows, headers, path: Path):
@@ -450,6 +397,14 @@ def write_markdown_table(rows, headers, path: Path):
         f.write("|" + "|".join(["---"] * len(headers)) + "|\n")
         for row in rows:
             f.write("| " + " | ".join(str(row[h]) for h in headers) + " |\n")
+
+def write_csv(rows, headers, path: Path):
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
 
 
 # ---------------------
@@ -484,13 +439,22 @@ if __name__ == "__main__":
         "two_phase_adversarial": []
     }
 
-    # ----------------------------
+   # ----------------------------
     # Single-Phase Sweep
     # ----------------------------
-    print("\n=== Single-phase stress sweep ===")
+    log("\n=== Single-phase stress sweep ===")
+
+    single_csv_rows = []
+
     for k in ks_single:
+        log(f"Processing single-phase k={k} ...")
+
+        t_start_k = time.time()
+
+        # Generate matrices and run phase router
         routes, stats, fill, t_ms, S, T = run_single_test(N, k, 42, 123)
 
+        # Hash router
         t0 = time.time()
         hash_routes = hash_router(S, T, k)
         hash_t_ms = (time.time() - t0) * 1000
@@ -498,67 +462,100 @@ if __name__ == "__main__":
         hash_stats = compute_column_statistics(hash_routes, N)
         hash_fill = compute_fill_metrics(hash_routes, N, k)
 
-        print(
-            f"k={k:5d} | phase skew={stats['col_skew']:.2f}, "
+        log(f"k={k:5d} | phase skew={stats['col_skew']:.2f}, "
             f"hash skew={hash_stats['col_skew']:.2f}, "
-            f"time={t_ms:.1f} ms"
-        )
+            f"time={t_ms:.1f} ms")
 
+        # Store results
         all_results["single_phase"].append({
             "k": k,
-            "phase_router": {
-                "stats": stats,
-                "fill": fill,
-                "time_ms": t_ms
-            },
-            "hash_router": {
-                "stats": hash_stats,
-                "fill": hash_fill,
-                "time_ms": hash_t_ms
-            }
+            "phase_router": {"stats": stats, "fill": fill, "time_ms": t_ms},
+            "hash_router": {"stats": hash_stats, "fill": hash_fill, "time_ms": hash_t_ms}
         })
 
-        # Single-phase load visualization 
-    if not SKIP_PLOTS:
-        plot_phase2_column_load(
-            N, k,
-            routes,
-            hash_routes,
-            output_path=out / f"single_phase_load_N{N}_k{k}.png"
-        )
+        # CSV row
+        single_csv_rows.append({
+            "k": k,
+            "phase_col_max": stats["col_max"],
+            "phase_col_skew": stats["col_skew"],
+            "phase_fill_ratio": fill["fill_ratio"],
+            "phase_time_ms": t_ms,
+            "hash_col_max": hash_stats["col_max"],
+            "hash_col_skew": hash_stats["col_skew"],
+            "hash_fill_ratio": hash_fill["fill_ratio"],
+            "hash_time_ms": hash_t_ms,
+        })
 
-        # Free memory aggressively
+        # Plotting (if enabled)
+        if not SKIP_PLOTS:
+            load_phase = column_loads_from_routes(routes, N)
+            load_hash  = column_loads_from_routes(hash_routes, N)
+
+            plot_column_loads(
+                N, k,
+                load_phase,
+                load_hash,
+                out_dir=out / "plots",
+                prefix="phase1_column_load"
+            )
+            del load_phase, load_hash
+
+        # Free memory
         del routes, hash_routes, S, T
 
+        log(f"Finished single-phase k={k} | elapsed {time.time() - t_start_k:.1f}s | RSS={mem_gb():.2f} GB")
+
+    # Save single-phase CSV
+    write_csv(
+        rows=single_csv_rows,
+        headers=[
+            "k", "phase_col_max", "phase_col_skew", "phase_fill_ratio", "phase_time_ms",
+            "hash_col_max", "hash_col_skew", "hash_fill_ratio", "hash_time_ms"
+        ],
+        path=out / "single_phase_results.csv"
+    )
+    log(f"Single-phase CSV saved to {out / 'single_phase_results.csv'}")
+                    
     # ----------------------------
     # Two-Phase Adversarial Test
     # ----------------------------
-    print("\n=== Two-phase adversarial composability test ===")
+    log("\n=== Two-phase adversarial composability test ===")
+
+    two_phase_csv_rows = []
+
     for k in ks_two:
+        log(f"Processing two-phase adversarial k={k} ...")
+        t_start_k = time.time()
+
         result = run_two_phase_adversarial_test(N, k)
         all_results["two_phase_adversarial"].append(result)
 
-        # NO plotting here
-        # NO route access here
-        # run_two_phase_adversarial_test already saved plots
+        # Markdown / CSV row
+        two_phase_csv_rows.append({
+            "k": result["k"],
+            "phase2_col_max": result["phase_router"]["phase2"]["col_max"],
+            "phase2_col_skew": result["phase_router"]["phase2"]["col_skew"],
+            "hash2_col_max": result["hash_router"]["phase2"]["col_max"],
+            "hash2_col_skew": result["hash_router"]["phase2"]["col_skew"],
+            "phase_time_ms": int(result["phase_router"]["time_ms"]["phase1"] + result["phase_router"]["time_ms"]["phase2"]),
+            "hash_time_ms": int(result["hash_router"]["time_ms"]["phase1"] + result["hash_router"]["time_ms"]["phase2"]),
+        })
 
-    # ----------------------------
-    # Save Results
-    # ----------------------------
-    json_path = out / "stress_test_results.json"
-    with open(json_path, "w") as f:
-        json.dump(make_json_serializable(all_results), f, indent=2)
-    print(f"All metrics saved to {json_path}")
+        log(f"Finished two-phase k={k} | elapsed {time.time() - t_start_k:.1f}s | RSS={mem_gb():.2f} GB")
 
-    # Routing time vs k (Phase 1 + Phase 2)
-if not SKIP_PLOTS:
-    plot_routing_time(
-        all_results["two_phase_adversarial"],
-        output_path=out / "phase1_plus_phase2_routing_time.png"
+    # Save two-phase CSV
+    write_csv(
+        rows=two_phase_csv_rows,
+        headers=[
+            "k", "phase2_col_max", "phase2_col_skew",
+            "hash2_col_max", "hash2_col_skew",
+            "phase_time_ms", "hash_time_ms"
+        ],
+        path=out / "two_phase_adversarial_results.csv"
     )
+    log(f"Two-phase CSV saved to {out / 'two_phase_adversarial_results.csv'}")
 
-    print("\n✓ All tests complete")
-
+    # Save Markdown
     md_rows = []
     for r in all_results["two_phase_adversarial"]:
         md_rows.append({
@@ -567,24 +564,15 @@ if not SKIP_PLOTS:
             "phase2_skew": f"{r['phase_router']['phase2']['col_skew']:.2f}",
             "hash2_max_load": r["hash_router"]["phase2"]["col_max"],
             "hash2_skew": f"{r['hash_router']['phase2']['col_skew']:.2f}",
-            "phase_time_ms":
-                int(r["phase_router"]["time_ms"]["phase1"]
-                + r["phase_router"]["time_ms"]["phase2"]),
-            "hash_time_ms":
-                int(r["time_ms"]["phase1"] + r["time_ms"]["phase2"]),
+            "phase_time_ms": int(r["phase_router"]["time_ms"]["phase1"] + r["phase_router"]["time_ms"]["phase2"]),
+            "hash_time_ms": int(r["hash_router"]["time_ms"]["phase1"] + r["hash_router"]["time_ms"]["phase2"]),
         })
 
     write_markdown_table(
-    rows=md_rows,
-    headers=[
-        "k",
-        "phase2_max_load",
-        "phase2_skew",
-        "hash2_max_load",
-        "hash2_skew",
-        "phase_time_ms",
-        "hash_time_ms",
-    ],
-    path=out / "two_phase_adversarial_results.md"
-)
+        rows=md_rows,
+        headers=["k", "phase2_max_load", "phase2_skew", "hash2_max_load", "hash2_skew", "phase_time_ms", "hash_time_ms"],
+        path=out / "two_phase_adversarial_results.md"
+    )
+    log(f"Two-phase Markdown saved to {out / 'two_phase_adversarial_results.md'}")
+
 
