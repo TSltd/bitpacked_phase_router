@@ -457,7 +457,7 @@ if __name__ == "__main__":
         })
         log(f"Finished two-phase k={k} | elapsed {time.time() - t_start_k:.1f}s | RSS={mem_gb():.2f} GB")
 
-    write_csv(two_phase_csv_rows, ["k", "phase2_col_max", "phase2_col_skew", "hash2_col_max", "hash2_skew",
+    write_csv(two_phase_csv_rows, ["k", "phase2_col_max", "phase2_col_skew", "hash2_col_max", "hash2_col_skew",
                                   "phase_time_ms", "hash_time_ms"], out / "two_phase_adversarial_results.csv")
     log(f"Two-phase CSV saved to {out / 'two_phase_adversarial_results.csv'}")
 
@@ -468,11 +468,11 @@ if __name__ == "__main__":
             "phase2_max_load": r["phase_router"]["phase2"]["col_max"],
             "phase2_skew": f"{r['phase_router']['phase2']['col_skew']:.2f}",
             "hash2_max_load": r["hash_router"]["phase2"]["col_max"],
-            "hash2_skew": f"{r['hash_router']['phase2']['col_skew']:.2f}",
+            "hash2_col_skew": f"{r['hash_router']['phase2']['col_skew']:.2f}",
             "phase_time_ms": int(r["phase_router"]["time_ms"]["phase1"] + r["phase_router"]["time_ms"]["phase2"]),
             "hash_time_ms": int(r["hash_router"]["time_ms"]["phase1"] + r["hash_router"]["time_ms"]["phase2"]),
         })
-    write_markdown_table(md_rows, ["k", "phase2_max_load", "phase2_skew", "hash2_max_load", "hash2_skew", "phase_time_ms", "hash_time_ms"],
+    write_markdown_table(md_rows, ["k", "phase2_max_load", "phase2_skew", "hash2_max_load", "hash2_col_skew", "phase_time_ms", "hash_time_ms"],
                          out / "two_phase_adversarial_results.md")
     log(f"Two-phase Markdown saved to {out / 'two_phase_adversarial_results.md'}")
 
