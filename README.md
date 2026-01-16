@@ -264,6 +264,8 @@ pip install -r requirements.txt
 
 > Ensure your virtual environment is activated before installing.
 
+## Quick Start
+
 ### **1. Build C++ Backend**
 
 ```bash
@@ -271,14 +273,6 @@ python setup.py build_ext --inplace
 ```
 
 ### **2. Run Evaluation / Scaling Experiments**
-
-- Full scaling test (N = 256–4096, k = 8–512):
-
-```bash
-python evaluation/phase_router_run.py
-```
-
-### **3. Evaluation**
 
 - **Single test** (N = 256, k = 32):
 
@@ -304,20 +298,19 @@ python evaluation/phase_router_vs_hash.py --skip-plots
 
 - **10-point multi-test** to probe **load balance, determinism, composability, and failure modes**
 
-````bash
+```bash
 python evaluation/phase_router_test_matrix.py
 ```
 
 [Test matrix documentation and usage instructions](docs/phase_router_test_matrix.md)
 
-
-### **4. Examples**
+### **3. Examples**
 
 - **Demo with random binary matrices** (NumPy/PyTorch, routes + stats output):
 
 ```bash
 python examples/demo_router.py
-````
+```
 
 - **MoE capacity planning** and overflow analysis:
 
@@ -435,3 +428,7 @@ The testing suite is documented in [`Testing Suite.md`](docs/Testing_Suite.md)
 Empirical performance and load-balance results are documented in [`evaluation.md`](docs/evaluation.md)
 
 ---
+
+```
+
+```
