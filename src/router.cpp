@@ -214,7 +214,7 @@ static void phase_router_bitpacked(
     std::vector<uint64_t> S_rot(N * NB_words);
     std::vector<uint64_t> T_rot(N * NB_words);
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < N; i++)
     {
         rotate_bits_full(&S_bits[i * NB_words], N, NB_words,
@@ -227,7 +227,7 @@ static void phase_router_bitpacked(
     std::vector<uint64_t> S_shuf(N * NB_words);
     std::vector<uint64_t> T_shuf(N * NB_words);
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < N; i++)
     {
         permute_columns_bits(&S_rot[i * NB_words],
@@ -243,7 +243,7 @@ static void phase_router_bitpacked(
     std::vector<uint64_t> S_final(N * NB_words);
     std::vector<uint64_t> T_prepared(N * NB_words);
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < N; i++)
     {
         size_t src_S = row_perm[i];
@@ -256,7 +256,7 @@ static void phase_router_bitpacked(
     // -------------------- Step 5: Rotate T 90° clockwise (pure rotation) --------------------
     std::vector<uint64_t> T_final(N * NB_words, 0);
 
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < N; i++)
     {
         for (size_t j = 0; j < N; j++)
@@ -297,7 +297,7 @@ static void phase_router_bitpacked(
 #endif
 
 // -------------------- Step 6: Bitwise AND (S_final ∧ T_final) and extract routes --------------------
-#pragma omp parallel for
+#pragma omp parallel for schedule(static)
     for (size_t i = 0; i < N; i++)
     {
         size_t cnt = 0;

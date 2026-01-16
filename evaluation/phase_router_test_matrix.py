@@ -109,6 +109,76 @@ def flatten_dict(d, parent_key="", sep="__"):
 
     return items
 
+def write_markdown_per_test(results, path: Path):
+    import platform
+
+    with open(path, "w") as f:
+        # --------------------------------------------------
+        # Title & intro
+        # --------------------------------------------------
+        f.write("# Phase Router Test Matrix\n\n")
+        f.write(
+            "Systematic stress tests for the bit-packed phase router, including:\n"
+            "- Row-degree extremes\n"
+            "- Column-target stress\n"
+            "- Seed reproducibility\n"
+            "- Monte Carlo Mean Load\n"
+            "- Large-scale performance\n"
+            "- Adversarial two-phase composability\n"
+            "- Edge-Case k Values\n"
+            "- Structured Sparse Patterns\n"
+            "- Phase Rotation Boundaries\n"
+            "- Hash Router Comparison\n\n"
+        )
+
+        # --------------------------------------------------
+        # Per-test tables
+        # --------------------------------------------------
+        for r in results:
+            test_name = r["test"]
+            result = r["result"]
+
+            f.write(f"## {test_name}\n\n")
+            f.write("| Metric | Value |\n")
+            f.write("|--------|-------|\n")
+
+            if isinstance(result, dict):
+                flat = flatten_dict(result)
+
+                for key, value in flat.items():
+                    if isinstance(value, bool):
+                        val = str(value)
+                    elif isinstance(value, int):
+                        val = str(value)
+                    elif isinstance(value, float):
+                        val = f"{value:.3f}"
+                    elif value is None:
+                        val = ""
+                    else:
+                        continue  # skip non-scalars
+
+                    f.write(f"| `{key}` | {val} |\n")
+            else:
+                f.write("| result | *(non-dict result)* |\n")
+
+            f.write("\n")
+
+        # --------------------------------------------------
+        # System info (once, at end)
+        # --------------------------------------------------
+        f.write("---\n\n")
+        f.write("### System Specs\n\n")
+        f.write(f"- OS: {platform.system()} {platform.release()}\n")
+        f.write(f"- Architecture: {platform.machine()}\n")
+        f.write(f"- Logical CPUs: {os.cpu_count()}\n")
+        if psutil:
+            f.write(f"- Physical cores: {psutil.cpu_count(logical=False)}\n")
+            freq = psutil.cpu_freq()
+            if freq:
+                f.write(f"- CPU freq: {freq.max:.1f} MHz\n")
+            f.write(f"- Total RAM: {psutil.virtual_memory().total / (1024**3):.2f} GB\n")
+
+
 def plot_column_loads(N, k, load_phase, load_hash, out_path, prefix="column_load"):
     if SKIP_PLOTS:
         return
@@ -222,9 +292,14 @@ def test_seed_reproducibility(N, k):
     S = generate_uniform_k_matrices(N, k, seed=1)
     T = generate_uniform_k_matrices(N, k, seed=2)
     routes1 = np.empty((N, k), dtype=np.int32)
-    router.pack_and_route(S, T, k, routes1, dump=False, validate=False)
     routes2 = np.empty((N, k), dtype=np.int32)
-    router.pack_and_route(S, T, k, routes2, dump=False, validate=False)
+
+    seed = 12345  # fixed for reproducibility
+
+    # Run twice with the same seed
+    router.pack_and_route(S, T, k, routes1, seed=seed)
+    router.pack_and_route(S, T, k, routes2, seed=seed)
+
     identical = np.array_equal(routes1, routes2)
     log(f"Seed reproducibility test: identical={identical}")
     return {"identical": identical}
@@ -505,11 +580,14 @@ if __name__ == "__main__":
             for key, value in flat.items():
                 # Allow scalar values only (CSV-safe)
                 if isinstance(value, bool):
-                    row[key] = value          # or int(value)
-                elif isinstance(value, (int, float)):
+                    row[key] = value           # or int(value)
+                elif isinstance(value, int):
                     row[key] = value
+                elif isinstance(value, float):
+                    row[key] = f"{value:.3f}"  # <-- precision control (default = 3 decimal places)
                 elif value is None:
                     row[key] = ""
+
 
         csv_rows.append(row)
 
@@ -517,6 +595,7 @@ if __name__ == "__main__":
     headers = sorted({key for row in csv_rows for key in row.keys()})
 
     write_csv(csv_rows, headers, out / "phase_router_test_matrix.csv")
-    write_markdown_table(csv_rows, headers, out / "phase_router_test_matrix.md")
+    write_markdown_per_test(all_results, out / "phase_router_test_matrix.md")
+
 
     log("All tests complete")
