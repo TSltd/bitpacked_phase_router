@@ -16,3 +16,6 @@ setuptools>=58.0.0
 # mypy>=0.900
 # black>=21.0
 # isort>=5.0.0
+
+# System info
+psutil>=5.9.0

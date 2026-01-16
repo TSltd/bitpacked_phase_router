@@ -25,6 +25,22 @@ import router
 # Memory and Logging Utilities
 # ============================================================================
 
+def print_system_specs():
+    import platform
+    try:
+        import psutil
+    except ImportError:
+        print("Install psutil for full system info: pip install psutil")
+        psutil = None
+    print(f"OS: {platform.system()} {platform.release()}")
+    print(f"Architecture: {platform.machine()}")
+    print(f"Logical CPUs: {os.cpu_count()}")
+    if psutil:
+        print(f"Physical cores: {psutil.cpu_count(logical=False)}")
+        print(f"CPU max freq: {psutil.cpu_freq().max:.1f} MHz")
+        print(f"Total RAM: {psutil.virtual_memory().total / 1e9:.2f} GB")
+
+
 def mem_gb() -> float:
     """Return resident memory in GB."""
     rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -301,11 +317,40 @@ def plot_routing_time(results, output_path=None):
 # ============================================================================
 
 def write_markdown_table(rows, headers, path: Path):
+    import platform
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+
     with open(path, "w") as f:
+        # Write table
         f.write("| " + " | ".join(headers) + " |\n")
         f.write("|" + "|".join(["---"] * len(headers)) + "|\n")
         for row in rows:
             f.write("| " + " | ".join(str(row[h]) for h in headers) + " |\n")
+
+        # Write system info as Markdown text after table
+        f.write("\n\n**System Specs:**\n\n")
+
+        # OS / CPU / RAM
+        cpu_model = platform.processor() or "Unknown"
+        f.write(f"- OS: {platform.system()} {platform.release()}\n")
+        f.write(f"- Architecture: {platform.machine()}\n")
+        f.write(f"- CPU model: {cpu_model}\n")
+        logical_threads = os.cpu_count()
+        f.write(f"- Logical CPUs: {logical_threads}\n")
+
+        if psutil:
+            physical_cores = psutil.cpu_count(logical=False)
+            cpu_freq = psutil.cpu_freq()
+            total_ram_gb = psutil.virtual_memory().total / (1024**3)
+            f.write(f"- Physical cores: {physical_cores}\n")
+            if cpu_freq:
+                f.write(f"- CPU max frequency: {cpu_freq.max:.1f} MHz\n")
+            f.write(f"- Total RAM: {total_ram_gb:.2f} GB\n")
+        else:
+            f.write("- psutil not installed, detailed CPU/RAM info unavailable\n")
 
 def write_csv(rows, headers, path: Path):
     with open(path, "w", newline="") as f:
@@ -336,6 +381,8 @@ if __name__ == "__main__":
     out.mkdir(exist_ok=True)
 
     all_results = {"single_phase": [], "two_phase_adversarial": []}
+
+    print_system_specs()
 
     # ----------------------------
     # Single-Phase Sweep
