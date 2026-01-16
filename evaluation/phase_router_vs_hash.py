@@ -18,6 +18,25 @@ sys.path.append(str(Path(__file__).parent.parent))
 import router
 import matplotlib.pyplot as plt
 
+from datetime import datetime
+
+import os
+import resource
+
+def mem_gb() -> float:
+    """Return resident memory in GB."""
+    rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KB, macOS reports bytes
+    if sys.platform == "darwin":
+        return rss_kb / (1024**3)
+    return rss_kb / (1024**2)
+
+
+def log(msg: str):
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg} | RSS={mem_gb():.2f} GB", flush=True)
+
+
 # ============================================================================
 # Matrix Generation
 # ============================================================================
@@ -166,50 +185,81 @@ def build_adversarial_S2(
 # ============================================================================
 
 def run_two_phase_adversarial_test(N: int, k: int):
-    print(f"\n{'='*60}")
-    print(f"Two-phase adversarial test: N={N}, k={k}")
-    print(f"{'='*60}")
+    log(f"Starting two-phase adversarial test: N={N}, k={k}")
 
+    log("Generating Phase 1 matrices")
     S1 = generate_uniform_k_matrices(N, k, seed=1)
     T1 = generate_uniform_k_matrices(N, k, seed=2)
 
     # ---- Phase router ----
+    log("Phase router: Phase 1 routing")
     routes1 = np.zeros((N, k), dtype=np.int32)
     t0 = time.time()
     router.pack_and_route(S1, T1, k, routes1, dump=False, validate=False)
     t_phase1 = (time.time() - t0) * 1000
 
+    log("Computing Phase 1 stats")
+    phase1_stats = compute_column_statistics(routes1, N)
+
+    log("Building adversarial S2")
     S2 = build_adversarial_S2(routes1, N, k)
+
+    # routes1 no longer needed
+    del routes1
+    log("Released Phase 1 routes")
+
+    # S1/T1 no longer needed by phase router
+    del S1, T1
+
+    log("Generating Phase 2 T2")
     T2 = generate_uniform_k_matrices(N, k, seed=3)
 
+    log("Phase router: Phase 2 routing")
     routes2 = np.zeros((N, k), dtype=np.int32)
     t0 = time.time()
     router.pack_and_route(S2, T2, k, routes2, dump=False, validate=False)
     t_phase2 = (time.time() - t0) * 1000
 
+    phase2_stats = compute_column_statistics(routes2, N)
+
+    # Phase matrices no longer needed
+    del S2, T2
+    log("Released Phase router matrices")
+
     # ---- Hash router ----
+    log("Hash router: Phase 1 routing")
     t0 = time.time()
-    hash1 = hash_router(S1, T1, k, seed=0)
+    hash1 = hash_router(
+        generate_uniform_k_matrices(N, k, seed=1),
+        generate_uniform_k_matrices(N, k, seed=2),
+        k,
+        seed=0
+    )
     t_hash1 = (time.time() - t0) * 1000
 
+    hash1_stats = compute_column_statistics(hash1, N)
+
+    log("Building adversarial S2 (hash)")
     S2_hash = build_adversarial_S2(hash1, N, k, seed=999)
+
+    log("Hash router: Phase 2 routing")
     t0 = time.time()
-    hash2 = hash_router(S2_hash, T2, k, seed=1)
+    hash2 = hash_router(S2_hash,
+                        generate_uniform_k_matrices(N, k, seed=3),
+                        k,
+                        seed=1)
     t_hash2 = (time.time() - t0) * 1000
 
-    # Compute stats
-    phase1_stats = compute_column_statistics(routes1, N)
-    phase2_stats = compute_column_statistics(routes2, N)
-    hash1_stats = compute_column_statistics(hash1, N)
     hash2_stats = compute_column_statistics(hash2, N)
 
-    print("\nPhase router:")
-    print(f"  Phase 1 → max={phase1_stats['col_max']}, skew={phase1_stats['col_skew']:.2f}, time={t_phase1:.1f} ms")
-    print(f"  Phase 2 → max={phase2_stats['col_max']}, skew={phase2_stats['col_skew']:.2f}, time={t_phase2:.1f} ms")
+    del S2_hash, hash1
+    log("Released hash router intermediates")
 
-    print("\nHash router:")
-    print(f"  Phase 1 → max={hash1_stats['col_max']}, skew={hash1_stats['col_skew']:.2f}, time={t_hash1:.1f} ms")
-    print(f"  Phase 2 → max={hash2_stats['col_max']}, skew={hash2_stats['col_skew']:.2f}, time={t_hash2:.1f} ms")
+    log(
+        f"Completed k={k} | "
+        f"phase2 skew={phase2_stats['col_skew']:.2f}, "
+        f"hash2 skew={hash2_stats['col_skew']:.2f}"
+    )
 
     return {
         "k": k,
@@ -317,7 +367,7 @@ def plot_routing_time(results, output_path=None):
 if __name__ == "__main__":
     N = 32000
     ks_single = [16, 64, 256, 1024, 4096, 12800]   # single-phase sweep
-    ks_two = [64, 256, 1024, 4096, 12800]           # two-phase adversarial
+    ks_two = [16, 64, 256, 1024, 4096, 12800]      # two-phase adversarial
 
     out = Path("test_output")
     out.mkdir(exist_ok=True)
@@ -377,13 +427,18 @@ for k in ks_single:
         result = run_two_phase_adversarial_test(N, k)
         all_results["two_phase_adversarial"].append(result)
 
-        # Plot Phase 2 column load distribution
+        log(f"Plotting Phase 2 column loads for k={k}")
         plot_phase2_column_load(
             N, k,
             result['phase_router']['routes2'],
             result['hash_router']['routes2'],
             output_path=out / f"phase2_load_N{N}_k{k}.png"
         )
+
+        # ---- FREE LARGE ARRAYS ASAP ----
+        log(f"Releasing large route arrays for k={k}")
+        del result['phase_router']['routes2']
+        del result['hash_router']['routes2']
 
     # Save all results to JSON
     json_path = out / "stress_test_results.json"
