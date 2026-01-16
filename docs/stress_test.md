@@ -81,11 +81,24 @@ The router was evaluated with low to high `k` values to stress both performance 
 
 To test **composability under adversarial conditions**, we applied a two-phase stress scenario where the second phase is designed to force candidate collisions that collapse hash-based routers. Metrics for the largest runs are summarized in Table 2:
 
-| k    | Phase 1 Time (ms) | Phase 2 Time (ms) | Max Column Load (Phase 2) | Column Skew (Phase 2) |
-| ---- | ----------------- | ----------------- | ------------------------- | --------------------- |
-| 64   | 26,853            | 15,364            | 3                         | 23.6                  |
-| 256  | 11,898            | 13,534            | 10                        | 4.4                   |
-| 1024 | 14,306            | 17,660            | 56                        | 1.71                  |
+### Single-Phase Stress Sweep
+
+| k     | Phase Router Time (ms) | Active Routes | Routes/Row | Column Skew | Fill Ratio | Hash Router Time (ms) | Hash Column Skew |
+| ----- | ---------------------- | ------------- | ---------- | ----------- | ---------- | --------------------- | ---------------- |
+| 16    | 20675.3                | 67            | 0.0021     | 477.61      | 0.00013    | 20675.3               | 533.33           |
+| 64    | 13797.4                | 1065          | 0.0333     | 60.09       | 0.00052    | 13797.4               | 57.97            |
+| 256   | 11504.4                | 16322         | 0.5101     | 11.76       | 0.00199    | 11504.4               | 9.69             |
+| 1024  | 12666.9                | 261146        | 8.1608     | 3.80        | 0.00797    | 12666.9               | 2.59             |
+| 4096  | 31516.2                | 4168917       | 130.2787   | 2.37        | 0.03181    | 31516.2               | 1.35             |
+| 12800 | 26102.2                | 40653071      | 1270.4085  | 2.09        | 0.09925    | 26102.2               | 1.11             |
+
+### Two-Phase Adversarial Test
+
+| k    | Phase Router Phase 1 Time (ms) | Phase Router Phase 2 Time (ms) | Phase 2 Max Column Load | Phase 2 Column Skew | Hash Router Phase 1 Time (ms) | Hash Router Phase 2 Time (ms) | Hash Phase 2 Max Column Load | Hash Phase 2 Column Skew |
+| ---- | ------------------------------ | ------------------------------ | ----------------------- | ------------------- | ----------------------------- | ----------------------------- | ---------------------------- | ------------------------ |
+| 64   | 15141.7                        | 12139.0                        | 4                       | 30.88               | 26158.5                       | 990.0                         | 75                           | 591.72                   |
+| 256  | 26307.6                        | 12025.8                        | 9                       | 4.41                | 7209.2                        | 12386.2                       | 56                           | 27.56                    |
+| 1024 | 10785.9                        | 13796.2                        | 60                      | 1.83                | 7570.3                        | 17685.0                       | 115                          | 3.50                     |
 
 **Observations:**
 

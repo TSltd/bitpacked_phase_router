@@ -316,39 +316,86 @@ def plot_routing_time(results, output_path=None):
 
 if __name__ == "__main__":
     N = 32000
-    ks = [16, 64, 256, 1024]
-
-    print("\n=== Single-phase stress sweep ===")
-    for k in ks:
-        routes, stats, fill, t_ms, S, T = run_single_test(N, k, 42, 123)
-        hash_routes = hash_router(S, T, k)
-        hash_stats = compute_column_statistics(hash_routes, N)
-
-        print(
-            f"k={k:5d} | phase skew={stats['col_skew']:.2f}, "
-            f"hash skew={hash_stats['col_skew']:.2f}, "
-            f"time={t_ms:.1f} ms"
-        )
-
-    print("\n=== Two-phase adversarial composability test ===")
-    results = []
-    for k in [64, 256, 1024]:
-        result = run_two_phase_adversarial_test(N, k)
-        results.append(result)
-
-        # Automatically plot Phase 2 load distribution
-        routes_phase = result['phase_router']['routes2']
-        routes_hash = result['hash_router']['routes2']
-        plot_phase2_column_load(N, k, routes_phase, routes_hash,
-                                output_path=Path(f"test_output/phase2_load_N{N}_k{k}.png"))
+    ks_single = [16, 64, 256, 1024, 4096, 12800]   # single-phase sweep
+    ks_two = [64, 256, 1024, 4096, 12800]           # two-phase adversarial
 
     out = Path("test_output")
     out.mkdir(exist_ok=True)
-    with open(out / "two_phase_adversarial.json", "w") as f:
-        json.dump(make_json_serializable(results), f, indent=2)
 
-    
-    # Plot cumulative routing times
-    plot_routing_time(results, output_path=Path(f"test_output/phase1_plus_phase2_routing_time.png"))
+    all_results = {
+        "single_phase": [],
+        "two_phase_adversarial": []
+    }
+
+   # ----------------------------
+# Single-Phase Sweep
+# ----------------------------
+print("\n=== Single-phase stress sweep ===")
+for k in ks_single:
+    routes, stats, fill, t_ms, S, T = run_single_test(N, k, 42, 123)
+    hash_routes = hash_router(S, T, k)
+    hash_stats = compute_column_statistics(hash_routes, N)
+    hash_fill = compute_fill_metrics(hash_routes, N, k)
+
+    print(
+        f"k={k:5d} | phase skew={stats['col_skew']:.2f}, "
+        f"hash skew={hash_stats['col_skew']:.2f}, "
+        f"time={t_ms:.1f} ms"
+    )
+
+    # Save results to JSON
+    all_results["single_phase"].append({
+        "k": k,
+        "phase_router": {
+            "stats": stats,
+            "fill": fill,
+            "time_ms": t_ms
+        },
+        "hash_router": {
+            "stats": hash_stats,
+            "fill": hash_fill,
+            "time_ms": t_ms  # single-phase, same generation/routing time
+        }
+    })
+
+    # ----------------------------
+    # Plot Phase 2-style load for single-phase
+    # ----------------------------
+    # Use the same plot function to visualize column load
+    plot_phase2_column_load(
+        N, k,
+        routes,       # phase-router routes
+        hash_routes,  # hash-router routes
+        output_path=out / f"single_phase_load_N{N}_k{k}.png"
+    )
+
+    # ----------------------------
+    # Two-Phase Adversarial Test
+    # ----------------------------
+    print("\n=== Two-phase adversarial composability test ===")
+    for k in ks_two:
+        result = run_two_phase_adversarial_test(N, k)
+        all_results["two_phase_adversarial"].append(result)
+
+        # Plot Phase 2 column load distribution
+        plot_phase2_column_load(
+            N, k,
+            result['phase_router']['routes2'],
+            result['hash_router']['routes2'],
+            output_path=out / f"phase2_load_N{N}_k{k}.png"
+        )
+
+    # Save all results to JSON
+    json_path = out / "stress_test_results.json"
+    with open(json_path, "w") as f:
+        json.dump(make_json_serializable(all_results), f, indent=2)
+    print(f"All metrics saved to {json_path}")
+
+    # Plot cumulative routing times (Phase1 + Phase2)
+    plot_routing_time(
+        all_results["two_phase_adversarial"],
+        output_path=out / "phase1_plus_phase2_routing_time.png"
+    )
 
     print("\n✓ All tests complete")
+
