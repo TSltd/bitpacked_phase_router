@@ -96,7 +96,7 @@ def plot_column_loads(N, k, load_phase, load_hash, out_path, prefix="column_load
         return
     def save_hist(load, label, fname):
         bins = np.arange(0, load.max() + 2) - 0.5
-        # skew = load.max() / (load.mean() + 1e-9)
+        skew = load.max() / (load.mean() + 1e-9)
         plt.figure(figsize=(8,5))
         plt.hist(load, bins=bins, log=True)
         plt.xlabel("Column load")
@@ -473,10 +473,11 @@ if __name__ == "__main__":
     csv_rows = []
     for r in all_results:
         row = {"test": r["test"], "time_ms": r["time_ms"]}
-        if isinstance(v2, dict):
-            for k3, v3 in v2.items():
-                if isinstance(v3, (int, float)):
-                    row[f"{k2}_{k3}"] = v3
+        result = r["result"]
+        if isinstance(result, dict):
+            for key, value in result.items():
+                if isinstance(value, (int, float)):
+                    row[key] = value
 
         csv_rows.append(row)
 
