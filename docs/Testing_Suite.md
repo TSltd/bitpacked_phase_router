@@ -2,10 +2,12 @@
 
 ## **1. Overview**
 
-We have two scripts for testing the phase router:
+We have four scripts for testing the phase router:
 
 - **`phase_router_test.py`** – executes **single tests** for a given matrix size (`N`) and routing degree (`k`). Performs correctness checks, statistics, and optional visual outputs.
 - **`phase_router_run.py`** – executes **batches of tests** over multiple `N`, `k`, and threading configurations, collects metrics, and produces reproducibility and scaling data.
+- **`phase_router_vs_hash.py`** – performs **comprehensive stress tests** comparing the phase router against a simple hash-based router, including single-phase and adversarial two-phase composability tests.
+- **`phase_router_test_matrix.py`** – runs a **systematic test matrix** covering load balance, determinism, composability, and failure modes across various input patterns and edge cases.
 
 These scripts are designed to work with the **single-phase router** (`router.router`, `pack_and_route`, `route_packed_with_stats`).
 
@@ -160,3 +162,175 @@ These scripts are designed to work with the **single-phase router** (`router.rou
   - Seed, hash of routes array for regression.
 
 ---
+
+## **5. `phase_router_vs_hash.py` Specification**
+
+### **5.1 Overview**
+
+This script performs **comprehensive stress tests** comparing the bit-packed phase router against a simple hash-based router. It includes single-phase routing tests and adversarial two-phase composability tests where hash routing typically collapses.
+
+### **5.2 Inputs / Configuration**
+
+- `N` – matrix size (default: 16,000)
+- `ks_single` – list of k values for single-phase tests: `[16, 64, 256, 1024, 4096, 12800]`
+- `ks_two` – list of k values for two-phase adversarial tests: `[16, 64, 256, 1024, 4096, 12800]`
+- `--skip-plots` – optional flag to disable plotting for memory savings
+
+### **5.3 Workflow**
+
+1. **Single-Phase Stress Sweep**
+
+   - Generate random binary matrices `S` and `T`
+   - Run phase router and hash router on same inputs
+   - Collect column load statistics and timing
+   - Compare skew, fill ratios, and performance
+
+2. **Two-Phase Adversarial Test**
+
+   - **Phase 1**: Route with phase router and hash router
+   - **Adversarial Construction**: Build worst-case `S2` matrix based on Phase 1 routes
+   - **Phase 2**: Route again with both routers
+   - Measure load collapse and composability failures
+
+3. **Metric Collection**
+
+   - Column statistics: min, max, mean, std, skew
+   - Fill metrics: active routes, routes per row, fill ratio
+   - Timing: phase1 + phase2 total runtime
+   - System hardware metadata
+
+### **5.4 Outputs**
+
+- **CSV files**:
+
+  - `single_phase_results.csv` – single-phase comparison metrics
+  - `two_phase_adversarial_results.csv` – two-phase adversarial test results
+
+- **Markdown table**:
+
+  - `two_phase_adversarial_results.md` – human-readable summary with system specs
+
+- **Optional plots** (in `test_output/plots/`):
+
+  - Column load histograms comparing phase vs hash routers
+  - Routing time vs k plots
+
+- **System information** appended to markdown files:
+  - OS, architecture, CPU model, cores, frequency, RAM
+
+---
+
+## **6. `phase_router_test_matrix.py` Specification**
+
+### **6.1 Overview**
+
+This script runs a **systematic test matrix** covering load balance, determinism, composability, and failure modes. It goes beyond single-run correctness to evaluate distributional behavior and worst-case scenarios.
+
+### **6.2 Test Categories**
+
+The test matrix includes 10 comprehensive test scenarios:
+
+1. **Row-Degree Extremes** – Mixed sparse/dense rows
+2. **Column-Target Stress** – Uneven column degrees
+3. **Seed Reproducibility** – Deterministic behavior verification
+4. **Monte Carlo Mean Load** – Seed-averaged statistical analysis
+5. **Large-Scale Performance** – Scaling tests (N=1024, k=64)
+6. **Adversarial Two-Phase** – Composability testing
+7. **Edge-Case k Values** – Boundary conditions (k=1, k=N)
+8. **Structured Sparse Patterns** – Diagonal/checkerboard patterns
+9. **Phase Rotation Boundaries** – Wrap-around testing
+10. **Hash Router Comparison** – Baseline comparison
+
+### **6.3 Inputs / Configuration**
+
+- `N` – matrix size (default: 1024)
+- `k` – max connections per row (default: 64)
+- `--skip-plots` – optional flag to disable plotting
+
+### **6.4 Workflow**
+
+1. **Test Execution**
+
+   - Loop through all 10 test scenarios
+   - Each test generates appropriate matrices and runs routing
+   - Collect metrics and timing for each test
+
+2. **Metric Collection**
+
+   - Column load statistics: min, max, mean, std, skew
+   - Runtime per test
+   - System hardware metadata
+   - Optional distribution plots
+
+3. **Result Aggregation**
+
+   - Combine results from all tests
+   - Generate CSV and markdown outputs
+
+### **6.5 Outputs**
+
+- **CSV file**: `phase_router_test_matrix.csv` – machine-readable metrics
+- **Markdown table**: `phase_router_test_matrix.md` – human-readable summary
+- **Optional plots** (in `test_output/plots/`): Column load histograms
+- **System information** appended to markdown files
+
+---
+
+## **7. Running the Test Suite**
+
+### **7.1 Build Requirements**
+
+```bash
+# Build C++ extension first
+python setup.py build_ext --inplace
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### **7.2 Running Individual Tests**
+
+```bash
+# Single test
+python evaluation/phase_router_test.py
+
+# Batch scaling tests
+python evaluation/phase_router_run.py
+
+# Phase router vs hash comparison
+python evaluation/phase_router_vs_hash.py --skip-plots
+
+# Comprehensive test matrix
+python evaluation/phase_router_test_matrix.py --skip-plots
+```
+
+### **7.3 Output Location**
+
+All test outputs are saved to:
+
+```text
+test_output/
+├── *.csv          # Machine-readable metrics
+├── *.md           # Human-readable summaries
+└── plots/         # Optional visual outputs
+```
+
+### **7.4 System Requirements**
+
+- **Memory**: Large N/k values can consume significant memory
+- **Dependencies**: matplotlib and psutil recommended for full functionality
+- **Runtime**: Tests are designed to complete in reasonable time on modern hardware
+
+---
+
+## **8. Design Philosophy**
+
+The test suite is designed to be:
+
+- **Comprehensive**: Covering correctness, performance, and edge cases
+- **Comparative**: Including baseline comparisons (hash router)
+- **Reproducible**: With fixed seeds and system metadata
+- **Scalable**: Supporting various matrix sizes and configurations
+- **Analytical**: Providing both machine-readable and human-readable outputs
+
+The tests answer critical questions about routing behavior under stress, composability, and adversarial conditions.
