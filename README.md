@@ -219,7 +219,7 @@ The Phase Router achieves **exceptional performance** through bit-packed operati
 - **Linear scaling** with matrix size for fixed k
 - **Memory-bandwidth limited**, not compute-limited
 
-### **Benchmarks (Intel Core i5-2410M @ 2.30 GHz)**
+### **Benchmarks (Intel Core i5-2410M @ 2.30 GHz, 8Gb RAM, 2 cores)**
 
 | N    | k   | Routing Time | Total Time |
 | ---- | --- | ------------ | ---------- |
@@ -278,23 +278,38 @@ python setup.py build_ext --inplace
 python evaluation/phase_router_run.py
 ```
 
-### **3. Quick Test**
+### **3. Evaluation**
 
-- Single test (N = 256, k = 32):
+- **Single test** (N = 256, k = 32):
 
 ```bash
 python evaluation/phase_router_test.py
 ```
 
+- **Batch execution script** for comprehensive scaling experiments
+
+```bash
+python evaluation/phase_router_run.py
+```
+
+- **Stress test** comparing the bit-packed **phase router** against a simple **hash-based router**
+
+```bash
+python evaluation/phase_router_vs_hash.py --skip-plots
+```
+
+(Plots optional)
+[`phase_router_vs_hash.md`](docs/phase_router_vs_hash.md)
+
 ### **4. Examples**
 
-- Run demo with random binary matrices (NumPy/PyTorch, routes + stats output):
+- **Demo with random binary matrices** (NumPy/PyTorch, routes + stats output):
 
 ```bash
 python examples/demo_router.py
 ```
 
-- MoE capacity planning and overflow analysis:
+- **MoE capacity planning** and overflow analysis:
 
 ```bash
 python examples/moe_routing_demo.py
