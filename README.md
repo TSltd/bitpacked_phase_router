@@ -299,7 +299,17 @@ python evaluation/phase_router_vs_hash.py --skip-plots
 ```
 
 (Plots optional)
-[`phase_router_vs_hash.md`](docs/phase_router_vs_hash.md)
+
+[Stress test documentation and usage instructions](docs/phase_router_vs_hash.md)
+
+- **10-point multi-test** to probe **load balance, determinism, composability, and failure modes**
+
+````bash
+python evaluation/phase_router_test_matrix.py
+```
+
+[Test matrix documentation and usage instructions](docs/phase_router_test_matrix.md)
+
 
 ### **4. Examples**
 
@@ -307,7 +317,7 @@ python evaluation/phase_router_vs_hash.py --skip-plots
 
 ```bash
 python examples/demo_router.py
-```
+````
 
 - **MoE capacity planning** and overflow analysis:
 
