@@ -11,6 +11,8 @@ from pathlib import Path
 import json
 from typing import Dict, Tuple, Optional
 import sys
+import argparse
+
 
 # Add project root to Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -287,13 +289,17 @@ def run_two_phase_adversarial_test(N: int, k: int):
     )
 
     log("Plotting column loads...")
+
     # ---------- Plot ----------
-    plot_column_loads(
-        N, k,
-        load_phase,
-        load_hash,
-        out / f"phase2_load_N{N}_k{k}.png"
+    if not SKIP_PLOTS:
+        plot_column_loads(
+            N, k,
+            load_phase,
+            load_hash,
+            out_dir=out / "plots",
+            prefix="phase2_column_load"
     )
+
 
     log("Plots completed.")
     del load_phase, load_hash
@@ -328,34 +334,36 @@ def plot_column_loads(
     k: int,
     load_phase: np.ndarray,
     load_hash: np.ndarray,
-    output_path: Path
+    out_dir: Path,
+    prefix: str
 ):
-    max_load = max(load_phase.max(), load_hash.max())
-    bins = np.arange(0, max_load + 2) - 0.5
+    out_dir.mkdir(exist_ok=True, parents=True)
 
-    max_phase = load_phase.max()
-    skew_phase = max_phase / (load_phase.mean() + 1e-9)
-    max_hash = load_hash.max()
-    skew_hash = max_hash / (load_hash.mean() + 1e-9)
+    def save_hist(load, label, fname):
+        max_load = load.max()
+        bins = np.arange(0, max_load + 2) - 0.5
+        skew = max_load / (load.mean() + 1e-9)
 
-    plt.figure(figsize=(10, 6))
-    plt.hist(load_phase, bins=bins, alpha=0.7, label="Phase Router", log=True)
-    plt.hist(load_hash, bins=bins, alpha=0.5, label="Hash Router", log=True)
+        plt.figure(figsize=(8, 5))
+        plt.hist(load, bins=bins, log=True)
+        plt.xlabel("Column load")
+        plt.ylabel("Number of columns (log)")
+        plt.title(f"{label} Column Load\nN={N}, k={k}, skew={skew:.2f}")
+        plt.grid(True, which="both", linestyle="--", linewidth=0.5)
+        plt.tight_layout()
+        plt.savefig(out_dir / fname, dpi=300)
+        plt.close()
 
-    plt.text(max_phase, 10, f"Max={max_phase}\nSkew={skew_phase:.2f}",
-             ha="right", va="bottom")
-    plt.text(max_hash, 10, f"Max={max_hash}\nSkew={skew_hash:.2f}",
-             ha="right", va="bottom")
-
-    plt.xlabel("Column load")
-    plt.ylabel("Number of columns (log)")
-    plt.title(f"Column Load Distribution: N={N}, k={k}")
-    plt.legend()
-    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
-    plt.close()
+    save_hist(
+        load_phase,
+        "Phase Router",
+        f"{prefix}__phase_router__N{N}__k{k}.png"
+    )
+    save_hist(
+        load_hash,
+        "Hash Router",
+        f"{prefix}__hash_router__N{N}__k{k}.png"
+    )
 
 
 def plot_phase2_column_load(N, k, routes_phase, routes_hash, output_path=None):
@@ -436,6 +444,28 @@ def plot_routing_time(results, output_path=None):
         print(f"Timing figure saved to {output_path}")
     plt.close()
 
+def write_markdown_table(rows, headers, path: Path):
+    with open(path, "w") as f:
+        f.write("| " + " | ".join(headers) + " |\n")
+        f.write("|" + "|".join(["---"] * len(headers)) + "|\n")
+        for row in rows:
+            f.write("| " + " | ".join(str(row[h]) for h in headers) + " |\n")
+
+
+# ---------------------
+# --skip-plots CLI Flag
+# ---------------------
+
+parser = argparse.ArgumentParser(description="Phase router stress tests")
+parser.add_argument(
+    "--skip-plots",
+    action="store_true",
+    help="Disable all plotting (faster, lower memory use)"
+)
+args = parser.parse_args()
+
+SKIP_PLOTS = args.skip_plots
+
 
 # ============================================================================
 # Main
@@ -488,7 +518,8 @@ if __name__ == "__main__":
             }
         })
 
-        # Single-phase load visualization (OK to keep)
+        # Single-phase load visualization 
+    if not SKIP_PLOTS:
         plot_phase2_column_load(
             N, k,
             routes,
@@ -520,9 +551,40 @@ if __name__ == "__main__":
     print(f"All metrics saved to {json_path}")
 
     # Routing time vs k (Phase 1 + Phase 2)
+if not SKIP_PLOTS:
     plot_routing_time(
         all_results["two_phase_adversarial"],
         output_path=out / "phase1_plus_phase2_routing_time.png"
     )
 
     print("\n✓ All tests complete")
+
+    md_rows = []
+    for r in all_results["two_phase_adversarial"]:
+        md_rows.append({
+            "k": r["k"],
+            "phase2_max_load": r["phase_router"]["phase2"]["col_max"],
+            "phase2_skew": f"{r['phase_router']['phase2']['col_skew']:.2f}",
+            "hash2_max_load": r["hash_router"]["phase2"]["col_max"],
+            "hash2_skew": f"{r['hash_router']['phase2']['col_skew']:.2f}",
+            "phase_time_ms":
+                int(r["phase_router"]["time_ms"]["phase1"]
+                + r["phase_router"]["time_ms"]["phase2"]),
+            "hash_time_ms":
+                int(r["time_ms"]["phase1"] + r["time_ms"]["phase2"]),
+        })
+
+    write_markdown_table(
+    rows=md_rows,
+    headers=[
+        "k",
+        "phase2_max_load",
+        "phase2_skew",
+        "hash2_max_load",
+        "hash2_skew",
+        "phase_time_ms",
+        "hash_time_ms",
+    ],
+    path=out / "two_phase_adversarial_results.md"
+)
+
