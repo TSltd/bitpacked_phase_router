@@ -78,7 +78,7 @@ def write_markdown_table(rows, headers, path: Path):
         f.write("| " + " | ".join(headers) + " |\n")
         f.write("|" + "|".join(["---"] * len(headers)) + "|\n")
         for row in rows:
-            f.write("| " + " | ".join(str(row[h]) for h in headers) + " |\n")
+            f.write("| " + " | ".join(str(row.get(h, "")) for h in headers) + " |\n")
         # System info
         f.write("\n**System Specs:**\n")
         f.write(f"- OS: {platform.system()} {platform.release()}\n")
@@ -90,6 +90,24 @@ def write_markdown_table(rows, headers, path: Path):
             if freq:
                 f.write(f"- CPU freq: {freq.max:.1f} MHz\n")
             f.write(f"- Total RAM: {psutil.virtual_memory().total / (1024**3):.2f} GB\n")
+
+def flatten_dict(d, parent_key="", sep="__"):
+    """
+    Recursively flattens nested dictionaries.
+    Example:
+        {"a": {"b": 1}, "c": 2}
+        -> {"a__b": 1, "c": 2}
+    """
+    items = {}
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else str(k)
+
+        if isinstance(v, dict):
+            items.update(flatten_dict(v, new_key, sep=sep))
+        else:
+            items[new_key] = v
+
+    return items
 
 def plot_column_loads(N, k, load_phase, load_hash, out_path, prefix="column_load"):
     if SKIP_PLOTS:
@@ -437,7 +455,6 @@ tests = [
     
 ]
 
-
 # ============================================================================
 # Main Test Runner
 # ============================================================================
@@ -469,19 +486,37 @@ if __name__ == "__main__":
             "time_ms": int(dt)
         })
 
-    # Flatten results for CSV/Markdown where possible
+    # ------------------------------------------------------------------
+    # Flatten results for CSV / Markdown (ONCE, after all tests)
+    # ------------------------------------------------------------------
+
     csv_rows = []
+
     for r in all_results:
-        row = {"test": r["test"], "time_ms": r["time_ms"]}
+        row = {
+            "test": r["test"],
+            "time_ms": r["time_ms"],
+        }
+
         result = r["result"]
         if isinstance(result, dict):
-            for key, value in result.items():
-                if isinstance(value, (int, float)):
+            flat = flatten_dict(result)
+
+            for key, value in flat.items():
+                # Allow scalar values only (CSV-safe)
+                if isinstance(value, bool):
+                    row[key] = value          # or int(value)
+                elif isinstance(value, (int, float)):
                     row[key] = value
+                elif value is None:
+                    row[key] = ""
 
         csv_rows.append(row)
 
-    write_csv(csv_rows, list(csv_rows[0].keys()), out / "phase_router_test_matrix.csv")
-    write_markdown_table(csv_rows, list(csv_rows[0].keys()), out / "phase_router_test_matrix.md")
+    # Build complete header set
+    headers = sorted({key for row in csv_rows for key in row.keys()})
+
+    write_csv(csv_rows, headers, out / "phase_router_test_matrix.csv")
+    write_markdown_table(csv_rows, headers, out / "phase_router_test_matrix.md")
 
     log("All tests complete")
