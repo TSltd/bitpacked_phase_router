@@ -2,9 +2,9 @@
 
 A **high-performance C++ / Python library** for constructing **balanced, randomly mixed bipartite routings** using only **deterministic bitwise operations and permutations**.
 
-The Phase Router implements a **seed-controlled phase-space mixing operator** that converts two degree-specified binary matrices into a sparse bipartite coupling with **no geometric or phase-aligned bias**.
+The Phase Router implements a **seed-controlled phase-space mixing operator** that converts two degree-specified binary matrices into a sparse bipartite coupling which **removes input-order bias and phase alignment effects** under typical conditions.
 
-It is best understood as a **randomized convolution in cyclic phase space**: row-degree mass from both sides is embedded on a ring, independently mixed by permutations and phase shifts, and intersected to produce a sparse routing whose first-order statistics match the expected-degree law of a Chung–Lu bipartite model.
+It is best understood as a **randomized analogy to convolution in cyclic phase space**: row-degree mass from both sides is embedded on a ring, independently mixed by permutations and phase shifts, and intersected to produce a sparse routing whose first-order statistics match the expected-degree law of a Chung–Lu bipartite model.
 
 Unlike Chung–Lu, this is **not an independent-edge sampler**. It is a **constructive, seed-randomized, deterministic transport operator** implemented entirely with bitwise AND, shifts, popcount, and permutations, making it cache-efficient, SIMD-friendly, and fully reproducible.
 
@@ -85,8 +85,8 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
 
    These offsets determine how much each row will be cyclically rotated.
 
-3. **Barrel Rotation (Global N-bit Row-wise)**
-   Apply independent cyclic rotations to each row:
+3. **Cyclic row-wise bit rotation (Global N-bit Row-wise)**
+   Apply independent cumulative cyclic rotations to each row:
 
    ```
    S_rot[i] = RotateLeft(S[i], φ_i^S)
@@ -103,7 +103,7 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    T_shuf = PermuteColumns(T_rot, col_perm_T)
    ```
 
-   This preserves row sums while destroying geometric correlations. Each matrix uses a different seed-derived permutation.
+   Column permutations redistribute bits horizontally without altering the row-wise phase spreading effect. This preserves row sums while destroying geometric correlations. Each matrix uses a different seed-derived permutation.
 
 5. **Global Row Permutations (Independent for S and T)**
    Apply independent row permutations to both matrices:
@@ -116,7 +116,7 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    This removes input-order bias. Note that `S` and `T` use **different** row permutations to ensure independent mixing.
 
 6. **Transpose T 90° Clockwise**
-   Perform a pure geometric rotation:
+   Rotate T 90° clockwise (transpose) to align its columns with the output rows:
 
    ```
    T_final[j][i] = T_prepared[i][j]
@@ -340,11 +340,16 @@ route_packed_with_stats(...)
 
 ## **Statistical Analysis & Seed-Ensemble Evaluation**
 
-- Each run: fixed `(S, T, k)` + seed → deterministic routing `O(seed)`
+- Each seed produces a fully deterministic routing:
 
+```
+fixed `(S, T, k)` + seed → deterministic routing `O(seed)`
+```
+
+- Averaging over seeds approximates expected-degree behavior.
 - Statistical quantities are **seed-averaged**, not independent-edge estimates
 
-Utilities in `src/router_stats.py`:
+### Utilities in `src/router_stats.py`:
 
 - `monte_carlo_stats()` → seed-averaged loads, biases, skew
 
