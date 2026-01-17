@@ -26,6 +26,7 @@ dump/
 evaluation_results/
 *.log
 test_output/
+debug_dumps/
 
 # Dev files
 dev/

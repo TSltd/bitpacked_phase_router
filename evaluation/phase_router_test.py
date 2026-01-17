@@ -396,8 +396,8 @@ if __name__ == "__main__":
     print("Running quick test with N=256, k=32")
     
     metrics = run_single_test(
-        N=32000,
-        k=12800,
+        N=256,
+        k=32,
         seed_S=42,
         seed_T=123,
         dump_prefix="test_output/quick_test",

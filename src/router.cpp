@@ -22,6 +22,7 @@
 
 #define ROUTER_ENABLE_DUMP 0
 #define ROUTER_DUMP_INTERMEDIATE 0
+#define ROUTER_ROTATE_SELF_CHECK 0
 
 namespace py = pybind11;
 
@@ -54,13 +55,20 @@ static size_t get_l1d_cache_size()
     return 32 * 1024; // fallback to 32 KB if detection fails
 }
 
-// Choose optimal B size for block rotation
+// Choose optimal B size for blocked 90° rotation
 static size_t choose_block_size_from_cache()
 {
     size_t L1_bytes = get_l1d_cache_size();
-    size_t B = static_cast<size_t>(std::sqrt(L1_bytes * 8)); // bits → bytes
-    B = (B / 64) * 64;                                       // round down to multiple of 64
-    B = std::max<size_t>(64, B);                             // minimum block size
+
+    // Convert bytes to bits → approximate square root for block dimension
+    size_t B = static_cast<size_t>(std::sqrt(L1_bytes * 8));
+
+    // Round down to nearest multiple of 64 (for 64×64 micro-block transpose)
+    B = (B / 64) * 64;
+
+    // Ensure a minimum block size of 64
+    B = std::max<size_t>(64, B);
+
     return B;
 }
 
@@ -196,23 +204,58 @@ static void permute_columns_bits(const uint64_t *src,
 
 static inline void transpose64(uint64_t x[64])
 {
-    for (int i = 0; i < 6; i++)
+    uint64_t t;
+
+    // Stage 1
+    for (int i = 0; i < 32; i++)
     {
-        int shift = 1 << i;
-        uint64_t mask = 0xFFFFFFFFFFFFFFFFULL ^ ((1ULL << shift) - 1);
+        t = (x[i] ^ (x[i + 32] >> 32)) & 0x00000000FFFFFFFFULL;
+        x[i] ^= t;
+        x[i + 32] ^= t << 32;
+    }
 
-        for (int j = 0; j < 64; j += 2 * shift)
+    // Stage 2
+    for (int i = 0; i < 64; i += 32)
+        for (int j = 0; j < 16; j++)
         {
-            for (int k = 0; k < shift; k++)
-            {
-                uint64_t a = x[j + k];
-                uint64_t b = x[j + k + shift];
-
-                uint64_t t = ((a >> shift) ^ b) & mask;
-                x[j + k] = a ^ (t << shift);
-                x[j + k + shift] = b ^ t;
-            }
+            t = (x[i + j] ^ (x[i + j + 16] >> 16)) & 0x0000FFFF0000FFFFULL;
+            x[i + j] ^= t;
+            x[i + j + 16] ^= t << 16;
         }
+
+    // Stage 3
+    for (int i = 0; i < 64; i += 16)
+        for (int j = 0; j < 8; j++)
+        {
+            t = (x[i + j] ^ (x[i + j + 8] >> 8)) & 0x00FF00FF00FF00FFULL;
+            x[i + j] ^= t;
+            x[i + j + 8] ^= t << 8;
+        }
+
+    // Stage 4
+    for (int i = 0; i < 64; i += 8)
+        for (int j = 0; j < 4; j++)
+        {
+            t = (x[i + j] ^ (x[i + j + 4] >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
+            x[i + j] ^= t;
+            x[i + j + 4] ^= t << 4;
+        }
+
+    // Stage 5
+    for (int i = 0; i < 64; i += 4)
+        for (int j = 0; j < 2; j++)
+        {
+            t = (x[i + j] ^ (x[i + j + 2] >> 2)) & 0x3333333333333333ULL;
+            x[i + j] ^= t;
+            x[i + j + 2] ^= t << 2;
+        }
+
+    // Stage 6
+    for (int i = 0; i < 64; i += 2)
+    {
+        t = (x[i] ^ (x[i + 1] >> 1)) & 0x5555555555555555ULL;
+        x[i] ^= t;
+        x[i + 1] ^= t << 1;
     }
 }
 
@@ -224,66 +267,37 @@ static void rotate90_clockwise_bitpacked_64(
     const uint64_t *T_prepared,
     uint64_t *T_final,
     size_t N,
-    size_t NB_words,
-    size_t B)
+    size_t NB_words)
 {
+    // Initialize output to zero
     std::fill(T_final, T_final + N * NB_words, 0ULL);
 
-#pragma omp parallel for collapse(2) schedule(static)
-    for (size_t i_block = 0; i_block < N; i_block += B)
+    // SWAR rotation: process each destination row by extracting the corresponding source column
+    // Clockwise rotation: (i, j) → (j, N-1-i)
+    // So destination row dst_i gets column dst_i from source, placed in reverse order
+#pragma omp parallel for schedule(static)
+    for (size_t dst_i = 0; dst_i < N; dst_i++)
     {
-        for (size_t j_block = 0; j_block < N; j_block += B)
+        size_t src_col = dst_i; // Column to extract from source
+
+        // Extract column src_col from all source rows and place into destination row dst_i
+        for (size_t src_i = 0; src_i < N; src_i++)
         {
-            size_t i_end = std::min(i_block + B, N);
-            size_t j_end = std::min(j_block + B, N);
+            // Check if bit at (src_i, src_col) is set in T_prepared
+            size_t src_w = src_col >> 6;
+            size_t src_b = src_col & 63;
 
-            for (size_t ii = i_block; ii < i_end; ii += 64)
+            if (T_prepared[src_i * NB_words + src_w] & (1ULL << src_b))
             {
-                for (size_t jj = j_block; jj < j_end; jj += 64)
-                {
-                    uint64_t block[64] = {0};
-
-                    size_t rows = std::min<size_t>(64, i_end - ii);
-                    size_t cols = std::min<size_t>(64, j_end - jj);
-
-                    // ---- Load block ----
-                    for (size_t r = 0; r < rows; r++)
-                    {
-                        size_t src_row = ii + r;
-                        size_t word = jj >> 6;
-                        size_t bit = jj & 63;
-
-                        uint64_t v = T_prepared[src_row * NB_words + word];
-                        if (bit && word + 1 < NB_words)
-                            v |= T_prepared[src_row * NB_words + word + 1] << (64 - bit);
-
-                        block[r] = v & ((cols == 64) ? ~0ULL : ((1ULL << cols) - 1));
-                    }
-
-                    // ---- Transpose 64×64 ----
-                    transpose64(block);
-
-                    // ---- Store rotated ----
-                    for (size_t c = 0; c < cols; c++)
-                    {
-                        size_t dst_i = jj + c;
-                        size_t dst_j = N - 1 - ii;
-
-                        size_t dst_word = dst_j >> 6;
-                        size_t dst_bit = dst_j & 63;
-
-                        uint64_t v = block[c];
-
-                        T_final[dst_i * NB_words + dst_word] |= v >> dst_bit;
-                        if (dst_bit && dst_word + 1 < NB_words)
-                            T_final[dst_i * NB_words + dst_word + 1] |= v << (64 - dst_bit);
-                    }
-                }
+                // Clockwise: place this bit at column (N-1-src_i) in destination row dst_i
+                size_t dst_col = N - 1 - src_i;
+                size_t dst_w = dst_col >> 6;
+                size_t dst_b = dst_col & 63;
+                T_final[dst_i * NB_words + dst_w] |= 1ULL << dst_b;
             }
         }
     }
 }
-
 static inline uint64_t splitmix64(uint64_t &x)
 {
     uint64_t z = (x += 0x9E3779B97F4A7C15ULL);
@@ -366,19 +380,99 @@ static void phase_router_bitpacked(
         std::memcpy(&T_prepared[i * NB_words], &T_shuf[src_T * NB_words], NB_words * sizeof(uint64_t));
     }
 
-    // -------------------- Step 5: Rotate T 90° clockwise (blocked & atomic-free) --------------------
+    // -------------------- Step 5: Rotate T 90° clockwise --------------------
     std::vector<uint64_t> T_final(N * NB_words, 0);
 
-    // Dynamically choose block size
-    size_t B = choose_block_size_from_cache();
+    rotate90_clockwise_bitpacked_64(T_prepared.data(), T_final.data(), N, NB_words);
 
-    if (debug_prefix)
+#if ROUTER_ROTATE_SELF_CHECK
+
+    constexpr size_t CHECKS = 64;
+    std::mt19937_64 rng(seed_base ^ 0x524F544154453930ULL); // "ROTATE90"
+
+    for (size_t t = 0; t < CHECKS; t++)
     {
-        fprintf(stderr, "DEBUG: using block size B = %zu for 90° rotation\n", B);
+        size_t i = rng() % N;
+        size_t j = rng() % N;
+
+        size_t src_w = j >> 6;
+        size_t src_b = j & 63;
+
+        bool src_bit =
+            (T_prepared[i * NB_words + src_w] >> src_b) & 1ULL;
+
+        // Clockwise 90° rotation: (i, j) → (j, N - 1 - i)
+        size_t dst_i = j;
+        size_t dst_j = N - 1 - i;
+
+        size_t dst_w = dst_j >> 6;
+        size_t dst_b = dst_j & 63;
+
+        bool dst_bit =
+            (T_final[dst_i * NB_words + dst_w] >> dst_b) & 1ULL;
+
+        if (src_bit != dst_bit)
+        {
+            fprintf(stderr,
+                    "ROTATE90 CLOCKWISE SELF-CHECK FAILED\n"
+                    "  src (i=%zu, j=%zu) = %d\n"
+                    "  dst (i=%zu, j=%zu) = %d\n",
+                    i, j, int(src_bit),
+                    dst_i, dst_j, int(dst_bit));
+
+            // Dump matrices for debugging
+            fs::create_directories("debug_dumps");
+
+            // Dump T_prepared (before rotation)
+            FILE *f_prep = fopen("debug_dumps/T_prepared_FAILED.pbm", "wb");
+            if (f_prep)
+            {
+                fprintf(f_prep, "P1\n%zu %zu\n", N, N);
+                for (size_t row = 0; row < N; row++)
+                {
+                    for (size_t col = 0; col < N; col++)
+                    {
+                        size_t w = col >> 6;
+                        size_t b = col & 63;
+                        int bit = (T_prepared[row * NB_words + w] >> b) & 1;
+                        fprintf(f_prep, "%d ", bit);
+                    }
+                    fprintf(f_prep, "\n");
+                }
+                fclose(f_prep);
+                fprintf(stderr, "  Dumped T_prepared to: debug_dumps/T_prepared_FAILED.pbm\n");
+            }
+
+            // Dump T_final (after rotation)
+            FILE *f_final = fopen("debug_dumps/T_final_FAILED.pbm", "wb");
+            if (f_final)
+            {
+                fprintf(f_final, "P1\n%zu %zu\n", N, N);
+                for (size_t row = 0; row < N; row++)
+                {
+                    for (size_t col = 0; col < N; col++)
+                    {
+                        size_t w = col >> 6;
+                        size_t b = col & 63;
+                        int bit = (T_final[row * NB_words + w] >> b) & 1;
+                        fprintf(f_final, "%d ", bit);
+                    }
+                    fprintf(f_final, "\n");
+                }
+                fclose(f_final);
+                fprintf(stderr, "  Dumped T_final to: debug_dumps/T_final_FAILED.pbm\n");
+            }
+
+            abort();
+        }
     }
 
-    // Call the new blocked bit-packed rotation
-    rotate90_clockwise_bitpacked_64(T_prepared.data(), T_final.data(), N, NB_words, B);
+    // Only reached if all checks passed
+    fprintf(stderr,
+            "ROTATE90 CLOCKWISE SELF-CHECK PASSED (%zu samples)\n",
+            CHECKS);
+
+#endif
 
     // -------------------- Step 6: Optional PBM dumps --------------------
 #if ROUTER_ENABLE_DUMP && ROUTER_DUMP_INTERMEDIATE
