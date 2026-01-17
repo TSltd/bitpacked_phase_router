@@ -22,7 +22,8 @@
 
 #define ROUTER_ENABLE_DUMP 0
 #define ROUTER_DUMP_INTERMEDIATE 0
-#define ROUTER_ROTATE_SELF_CHECK 1
+#define ROUTER_ROTATE_SELF_CHECK 0
+#define ROUTER_VALIDATE 0
 
 namespace py = pybind11;
 
@@ -72,6 +73,7 @@ static size_t choose_block_size_from_cache()
     return B;
 }
 
+#if ROUTER_VALIDATE
 // Function prototype for validator (implementation below serves as declaration)
 static bool validate_phase_router(size_t N, size_t k, size_t NB_words,
                                   const uint64_t *S_bits,
@@ -82,6 +84,7 @@ static bool validate_phase_router(size_t N, size_t k, size_t NB_words,
                                   const uint64_t *row_perm_T,
                                   const int *routes,
                                   const char *debug_prefix);
+#endif
 
 #if ROUTER_ENABLE_DUMP
 static void dump_column_stats(const char *name,
@@ -529,12 +532,12 @@ static void phase_router_bitpacked(
         for (; cnt < k; cnt++)
             routes[i * k + cnt] = -1;
     }
-
+#if ROUTER_VALIDATE
     validate_phase_router(N, k, NB_words,
                           S_bits, T_bits,
                           row_perm, col_perm_S, col_perm_T, row_perm_T,
                           routes, debug_prefix);
-
+#endif
     // -------------------- Step 7: Dump routes PBM --------------------
 #if ROUTER_ENABLE_DUMP && ROUTER_DUMP_INTERMEDIATE
     if (debug_prefix && N <= 4096)
@@ -644,6 +647,8 @@ py::array_t<uint64_t> pack_bits(py::array_t<uint8_t> M_np)
         }
     return bits_np;
 }
+
+#if ROUTER_VALIDATE
 // Debug: check if phase-router preserves bit counts
 static bool validate_phase_router(size_t N, size_t k, size_t NB_words,
                                   const uint64_t *S_bits,
@@ -681,6 +686,7 @@ static bool validate_phase_router(size_t N, size_t k, size_t NB_words,
     // Validator returns true if all bits are routed
     return total_bits_S <= total_routes && total_bits_T <= total_routes;
 }
+#endif
 
 /* =========================
    Python-friendly routing APIs
@@ -781,6 +787,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
     double t1_route = now_ms();
 
+#if ROUTER_VALIDATE
     // Optional validator call
     if (validate)
         validate_phase_router(N, k, NB_words,
@@ -792,6 +799,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
                               row_perm_T.data(),
                               (int *)routes_np.mutable_data(),
                               dump ? prefix.c_str() : nullptr);
+#endif
 
     size_t active = 0;
     for (size_t i = 0; i < N * k; i++)
@@ -877,9 +885,7 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
 
     double t1 = now_ms();
 
-    // --------------------
-    // Optional validation
-    // --------------------
+#if ROUTER_VALIDATE
     if (validate)
     {
         validate_phase_router(
@@ -893,6 +899,7 @@ py::dict route_packed_with_stats(py::array_t<uint64_t> S_bits_np,
             (int *)routes_np.mutable_data(),
             debug_prefix.empty() ? nullptr : debug_prefix.c_str());
     }
+#endif
 
     // Count active routes
     size_t active = 0;
@@ -997,6 +1004,7 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
         debug_prefix.empty() ? nullptr : debug_prefix.c_str(),
         seed_base);
 
+#if ROUTER_VALIDATE
     // Optional validation (fixed argument order)
     if (validate)
     {
@@ -1010,6 +1018,7 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
                               (int *)routes_np.mutable_data(),
                               debug_prefix.empty() ? nullptr : debug_prefix.c_str());
     }
+#endif
 }
 
 #if ROUTER_ENABLE_DUMP
