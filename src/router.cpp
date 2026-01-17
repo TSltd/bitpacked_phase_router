@@ -22,7 +22,7 @@
 
 #define ROUTER_ENABLE_DUMP 0
 #define ROUTER_DUMP_INTERMEDIATE 0
-#define ROUTER_ROTATE_SELF_CHECK 0
+#define ROUTER_ROTATE_SELF_CHECK 1
 
 namespace py = pybind11;
 
@@ -263,7 +263,7 @@ static inline void transpose64(uint64_t x[64])
 // 90 degree tranpose
 // ---
 
-static void rotate90_clockwise_bitpacked_64(
+static void rotate90_clockwise(
     const uint64_t *T_prepared,
     uint64_t *T_final,
     size_t N,
@@ -298,6 +298,7 @@ static void rotate90_clockwise_bitpacked_64(
         }
     }
 }
+
 static inline uint64_t splitmix64(uint64_t &x)
 {
     uint64_t z = (x += 0x9E3779B97F4A7C15ULL);
@@ -383,7 +384,7 @@ static void phase_router_bitpacked(
     // -------------------- Step 5: Rotate T 90° clockwise --------------------
     std::vector<uint64_t> T_final(N * NB_words, 0);
 
-    rotate90_clockwise_bitpacked_64(T_prepared.data(), T_final.data(), N, NB_words);
+    rotate90_clockwise(T_prepared.data(), T_final.data(), N, NB_words);
 
 #if ROUTER_ROTATE_SELF_CHECK
 
