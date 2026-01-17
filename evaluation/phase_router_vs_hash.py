@@ -466,7 +466,7 @@ if __name__ == "__main__":
         md_rows.append({
             "k": r["k"],
             "phase2_max_load": r["phase_router"]["phase2"]["col_max"],
-            "phase2_skew": f"{r['phase_router']['phase2']['col_skew']:.2f}",
+            "phase2_col_skew": f"{r['phase_router']['phase2']['col_skew']:.2f}",
             "hash2_max_load": r["hash_router"]["phase2"]["col_max"],
             "hash2_col_skew": f"{r['hash_router']['phase2']['col_skew']:.2f}",
             "phase_time_ms": int(r["phase_router"]["time_ms"]["phase1"] + r["phase_router"]["time_ms"]["phase2"]),
