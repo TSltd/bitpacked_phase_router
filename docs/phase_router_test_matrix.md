@@ -178,6 +178,15 @@ It is designed to answer:
 
 # Test Results
 
+### System Specs
+
+- OS: Linux 6.14.0-37-generic
+- Architecture: x86_64
+- Logical CPUs: 4
+- Physical cores: 2
+- CPU freq: 2900.0 MHz
+- Total RAM: 7.61 GB
+
 ### Row-Degree Extremes
 
 | Metric     | Value  |
@@ -241,7 +250,7 @@ It is designed to answer:
 | `col_std`  | 1.889 |
 | `col_skew` | 2.491 |
 
-- `col_max ≈ 10` and `col_mean ≈ 4` match expectations for stress cases.
+- `col_max ≈ 10` and `col_mean ≈ 0` match expectations for stress cases.
 - Skew between 2.4–2.5 is consistent.
 - Performance seems stable.
 
