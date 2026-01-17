@@ -233,7 +233,7 @@ The Phase Router achieves **exceptional performance** through bit-packed operati
 
 **Key observations:**
 
-- Disabling debug dumps yields **30-157× speedup** (previous version had PBM I/O overhead)
+- Disabling debug dumps yields **30-157× speedup** (dumping incurs PBM I/O overhead)
 - Routing time dominates for large N (memory bandwidth)
 - Packing overhead visible only for small N (< 1 ms)
 - Suitable for amortized or batch-level routing in real-time MoE and sparse attention systems
