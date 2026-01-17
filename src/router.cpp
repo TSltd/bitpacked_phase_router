@@ -193,16 +193,34 @@ static void permute_columns_bits(const uint64_t *src,
         }
     }
 }
+
+static inline void transpose64(uint64_t x[64])
+{
+    for (int i = 0; i < 6; i++)
+    {
+        int shift = 1 << i;
+        uint64_t mask = 0xFFFFFFFFFFFFFFFFULL ^ ((1ULL << shift) - 1);
+
+        for (int j = 0; j < 64; j += 2 * shift)
+        {
+            for (int k = 0; k < shift; k++)
+            {
+                uint64_t a = x[j + k];
+                uint64_t b = x[j + k + shift];
+
+                uint64_t t = ((a >> shift) ^ b) & mask;
+                x[j + k] = a ^ (t << shift);
+                x[j + k + shift] = b ^ t;
+            }
+        }
+    }
+}
+
 // ---
 // 90 degree tranpose
 // ---
-// Rotate a bit-packed N x N matrix 90° clockwise using 64x64 bit-packed sub-blocks
-// T_prepared: input matrix
-// T_final: output matrix
-// NB_words = ceil(N / 64)
-// B = outer block size (multiple of 64 recommended, e.g., 256 or 512)
-// Rotate a bit-packed N x N matrix 90° clockwise using blocked 64×64 sub-blocks
-static void rotate90_clockwise_bitpacked_opt(
+
+static void rotate90_clockwise_bitpacked_64(
     const uint64_t *T_prepared,
     uint64_t *T_final,
     size_t N,
@@ -216,43 +234,49 @@ static void rotate90_clockwise_bitpacked_opt(
     {
         for (size_t j_block = 0; j_block < N; j_block += B)
         {
-
             size_t i_end = std::min(i_block + B, N);
             size_t j_end = std::min(j_block + B, N);
 
-            // iterate inside the block
             for (size_t ii = i_block; ii < i_end; ii += 64)
             {
                 for (size_t jj = j_block; jj < j_end; jj += 64)
                 {
+                    uint64_t block[64] = {0};
 
-                    size_t i_sub_end = std::min(ii + 64, i_end);
-                    size_t j_sub_end = std::min(jj + 64, j_end);
+                    size_t rows = std::min<size_t>(64, i_end - ii);
+                    size_t cols = std::min<size_t>(64, j_end - jj);
 
-                    for (size_t i = ii; i < i_sub_end; i++)
+                    // ---- Load block ----
+                    for (size_t r = 0; r < rows; r++)
                     {
-                        const uint64_t *src_row = &T_prepared[i * NB_words];
+                        size_t src_row = ii + r;
+                        size_t word = jj >> 6;
+                        size_t bit = jj & 63;
 
-                        for (size_t j = jj; j < j_sub_end; j++)
-                        {
+                        uint64_t v = T_prepared[src_row * NB_words + word];
+                        if (bit && word + 1 < NB_words)
+                            v |= T_prepared[src_row * NB_words + word + 1] << (64 - bit);
 
-                            size_t src_word = j / WORD_BITS;
-                            size_t src_bit = j % WORD_BITS;
+                        block[r] = v & ((cols == 64) ? ~0ULL : ((1ULL << cols) - 1));
+                    }
 
-                            if (src_row[src_word] & (1ULL << src_bit))
-                            {
+                    // ---- Transpose 64×64 ----
+                    transpose64(block);
 
-                                // ✅ correct global 90° clockwise mapping
-                                size_t dst_i = j;
-                                size_t dst_j = N - 1 - i;
+                    // ---- Store rotated ----
+                    for (size_t c = 0; c < cols; c++)
+                    {
+                        size_t dst_i = jj + c;
+                        size_t dst_j = N - 1 - ii;
 
-                                size_t dst_word = dst_j / WORD_BITS;
-                                size_t dst_bit = dst_j % WORD_BITS;
+                        size_t dst_word = dst_j >> 6;
+                        size_t dst_bit = dst_j & 63;
 
-                                T_final[dst_i * NB_words + dst_word] |=
-                                    (1ULL << dst_bit);
-                            }
-                        }
+                        uint64_t v = block[c];
+
+                        T_final[dst_i * NB_words + dst_word] |= v >> dst_bit;
+                        if (dst_bit && dst_word + 1 < NB_words)
+                            T_final[dst_i * NB_words + dst_word + 1] |= v << (64 - dst_bit);
                     }
                 }
             }
@@ -354,7 +378,7 @@ static void phase_router_bitpacked(
     }
 
     // Call the new blocked bit-packed rotation
-    rotate90_clockwise_bitpacked_opt(T_prepared.data(), T_final.data(), N, NB_words, B);
+    rotate90_clockwise_bitpacked_64(T_prepared.data(), T_final.data(), N, NB_words, B);
 
     // -------------------- Step 6: Optional PBM dumps --------------------
 #if ROUTER_ENABLE_DUMP && ROUTER_DUMP_INTERMEDIATE
