@@ -472,7 +472,7 @@ if __name__ == "__main__":
             "phase_time_ms": int(r["phase_router"]["time_ms"]["phase1"] + r["phase_router"]["time_ms"]["phase2"]),
             "hash_time_ms": int(r["hash_router"]["time_ms"]["phase1"] + r["hash_router"]["time_ms"]["phase2"]),
         })
-    write_markdown_table(md_rows, ["k", "phase2_max_load", "phase2_skew", "hash2_max_load", "hash2_col_skew", "phase_time_ms", "hash_time_ms"],
+    write_markdown_table(md_rows, ["k", "phase2_max_load", "phase2_col_skew", "hash2_max_load", "hash2_col_skew", "phase_time_ms", "hash_time_ms"],
                          out / "two_phase_adversarial_results.md")
     log(f"Two-phase Markdown saved to {out / 'two_phase_adversarial_results.md'}")
 

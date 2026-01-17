@@ -201,86 +201,57 @@ static void permute_columns_bits(const uint64_t *src,
 // T_final: output matrix
 // NB_words = ceil(N / 64)
 // B = outer block size (multiple of 64 recommended, e.g., 256 or 512)
-static void rotate90_clockwise_bitpacked(
+// Rotate a bit-packed N x N matrix 90° clockwise using blocked 64×64 sub-blocks
+static void rotate90_clockwise_bitpacked_opt(
     const uint64_t *T_prepared,
     uint64_t *T_final,
     size_t N,
     size_t NB_words,
-    size_t B = 256) // outer block size (in elements)
+    size_t B)
 {
     std::fill(T_final, T_final + N * NB_words, 0ULL);
 
-    size_t num_blocks = (N + B - 1) / B; // outer blocks
-
 #pragma omp parallel for collapse(2) schedule(static)
-    for (size_t i_block = 0; i_block < num_blocks; i_block++)
+    for (size_t i_block = 0; i_block < N; i_block += B)
     {
-        for (size_t j_block = 0; j_block < num_blocks; j_block++)
+        for (size_t j_block = 0; j_block < N; j_block += B)
         {
 
-            size_t i_start = i_block * B;
-            size_t j_start = j_block * B;
-            size_t i_end = std::min(i_start + B, N);
-            size_t j_end = std::min(j_start + B, N);
+            size_t i_end = std::min(i_block + B, N);
+            size_t j_end = std::min(j_block + B, N);
 
-            // process inner 64x64 sub-blocks
-            for (size_t ii = i_start; ii < i_end; ii += 64)
+            // iterate inside the block
+            for (size_t ii = i_block; ii < i_end; ii += 64)
             {
-                for (size_t jj = j_start; jj < j_end; jj += 64)
+                for (size_t jj = j_block; jj < j_end; jj += 64)
                 {
+
                     size_t i_sub_end = std::min(ii + 64, i_end);
                     size_t j_sub_end = std::min(jj + 64, j_end);
 
-                    // extract 64x64 bit block into array of 64-bit words
-                    uint64_t block[64] = {0};
-
                     for (size_t i = ii; i < i_sub_end; i++)
                     {
-                        block[i - ii] = 0;
+                        const uint64_t *src_row = &T_prepared[i * NB_words];
+
                         for (size_t j = jj; j < j_sub_end; j++)
                         {
+
                             size_t src_word = j / WORD_BITS;
                             size_t src_bit = j % WORD_BITS;
-                            if (T_prepared[i * NB_words + src_word] & (1ULL << src_bit))
+
+                            if (src_row[src_word] & (1ULL << src_bit))
                             {
-                                block[i - ii] |= 1ULL << (j - jj);
+
+                                // ✅ correct global 90° clockwise mapping
+                                size_t dst_i = j;
+                                size_t dst_j = N - 1 - i;
+
+                                size_t dst_word = dst_j / WORD_BITS;
+                                size_t dst_bit = dst_j % WORD_BITS;
+
+                                T_final[dst_i * NB_words + dst_word] |=
+                                    (1ULL << dst_bit);
                             }
-                        }
-                    }
-
-                    // rotate 64x64 block 90° clockwise using SWAR
-                    // simple version: transpose + flip columns
-                    uint64_t rotated[64] = {0};
-                    for (size_t r = 0; r < i_sub_end - ii; r++)
-                    {
-                        for (size_t c = 0; c < j_sub_end - jj; c++)
-                        {
-                            if (block[r] & (1ULL << c))
-                            {
-                                rotated[c] |= 1ULL << ((i_sub_end - ii - 1) - r);
-                            }
-                        }
-                    }
-
-                    // compute global destination start
-                    size_t dst_i_block = j_block;
-                    size_t dst_j_block = num_blocks - 1 - i_block;
-
-                    size_t dst_i_start = dst_i_block * B + (jj - j_start);
-                    size_t dst_j_start = dst_j_block * B + (i_sub_end - ii - (i_sub_end - ii));
-
-                    // write rotated bits to T_final
-                    for (size_t r = 0; r < j_sub_end - jj; r++)
-                    {
-                        size_t dst_row = dst_i_start + r;
-                        size_t dst_word_base = (dst_j_start) / WORD_BITS;
-                        size_t dst_bit_offset = (dst_j_start) % WORD_BITS;
-                        T_final[dst_row * NB_words + dst_word_base] |= rotated[r] << dst_bit_offset;
-
-                        // handle spillover across 64-bit word boundary
-                        if (dst_bit_offset + (i_sub_end - ii) > 64)
-                        {
-                            T_final[dst_row * NB_words + dst_word_base + 1] |= rotated[r] >> (64 - dst_bit_offset);
                         }
                     }
                 }
@@ -383,7 +354,7 @@ static void phase_router_bitpacked(
     }
 
     // Call the new blocked bit-packed rotation
-    rotate90_clockwise_bitpacked(T_prepared.data(), T_final.data(), N, NB_words, B);
+    rotate90_clockwise_bitpacked_opt(T_prepared.data(), T_final.data(), N, NB_words, B);
 
     // -------------------- Step 6: Optional PBM dumps --------------------
 #if ROUTER_ENABLE_DUMP && ROUTER_DUMP_INTERMEDIATE
