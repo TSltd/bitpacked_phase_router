@@ -238,6 +238,7 @@ The Phase Router achieves **exceptional performance** through bit-packed operati
 - Packing overhead visible only for small N (< 1 ms)
 - Suitable for amortized or batch-level routing in real-time MoE and sparse attention systems
 - **No GPU required**: optimized for cache-coherent SIMD hardware
+  See [`why_cpu.md`](docs/why_cpu.md)
 
 ### **Architectural Notes**
 
