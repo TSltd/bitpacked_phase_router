@@ -434,7 +434,3 @@ The testing suite is documented in [`Testing Suite.md`](docs/Testing_Suite.md)
 Empirical performance and load-balance results are documented in [`evaluation.md`](docs/evaluation.md)
 
 ---
-
-```
-
-```
