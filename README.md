@@ -5,7 +5,8 @@ A **high-performance C++ / Python library** for constructing **balanced, randoml
 <p align="center">
   <img src="docs/img/phase_router_pipeline.gif" width="25%" alt="Phase Router Animation">
 </p>
-> **TL;DR:** The Phase Router deterministically mixes two sets of connections to produce a balanced, predictable routing, avoiding hotspots and enforcing per-row limits—useful for evenly distributing work in large-scale systems.
+
+**The Phase Router deterministically mixes two sets of connections to produce a balanced, predictable routing, avoiding hotspots and enforcing per-row limits—useful for evenly distributing work in large-scale systems.**
 
 The Phase Router implements a **seed-controlled phase-space mixing operator**, also referred to as an **Orthogonal Load-Balanced Incidence Operator (OLBIO)** ([see details](docs/OLBIO.md)), that converts two degree-specified binary matrices into a sparse bipartite coupling which **removes input-order bias and phase alignment effects** under typical conditions.
 
