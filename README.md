@@ -2,6 +2,9 @@
 
 A **high-performance C++ / Python library** for constructing **balanced, randomly mixed bipartite routings** using only **deterministic bitwise operations and permutations**.
 
+<p align="center">
+  <img src="docs/img/phase_router_pipeline.gif" width="25%" alt="Phase Router Animation">
+</p>
 > **TL;DR:** The Phase Router deterministically mixes two sets of connections to produce a balanced, predictable routing, avoiding hotspots and enforcing per-row limits—useful for evenly distributing work in large-scale systems.
 
 The Phase Router implements a **seed-controlled phase-space mixing operator**, also referred to as an **Orthogonal Load-Balanced Incidence Operator (OLBIO)** ([see details](docs/OLBIO.md)), that converts two degree-specified binary matrices into a sparse bipartite coupling which **removes input-order bias and phase alignment effects** under typical conditions.
@@ -118,17 +121,14 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    This removes input-order bias. Note that `S` and `T` use **different** row permutations to ensure independent mixing.
 
    The **row permutation step** is **not part of the core algorithm**. Its main purposes are:
-
    - **Anonymization / obfuscation** of input order
    - Minor reduction of skew for very small k values
 
    **Trade-offs:**
-
    - **Computational cost:** Each row permutation adds memory accesses and bookkeeping overhead, which can noticeably increase runtime for large N.
    - **Marginal benefit:** In two-phase adversarial or large-scale scenarios, row permutations have **little to no impact** on column skew or maximum loads.
 
    **Usage:**
-
    - Row permutations can be toggled via the `ENABLE_ROW_PERM` compile-time flag (`#ifdef ENABLE_ROW_PERM`) or the corresponding runtime API argument.
    - By default, they are **disabled** to maximize performance.
    - Recommended only for testing, anonymization, or seed-independent input-order mixing.
@@ -136,7 +136,6 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    **Performance Note:**
 
    Empirical tests show that disabling row permutations:
-
    - Reduces runtime by up to **30–50%** for large N (≥1024)
    - Has **negligible effect on skew** for k ≥ 256
    - Preserves the Phase Router’s **deterministic, low-discrepancy behavior**
