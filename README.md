@@ -79,9 +79,11 @@ The Phase Router is therefore a **low-discrepancy randomized coupling**, not a p
 The phase-mixed transforms `S'` and `T'` are constructed as follows:
 
 1. **Row Alignment**
+
    Left-align all 1-bits in each row of `S` and `T` into a contiguous block, preserving row sums.
 
 2. **Phase Offset Computation (Independent for S and T)**
+
    Compute cumulative row offsets from the **original matrix order**:
 
    ```
@@ -92,6 +94,7 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    These offsets determine how much each row will be cyclically rotated.
 
 3. **Cyclic row-wise bit rotation (Global N-bit Row-wise)**
+
    Apply independent cumulative cyclic rotations to each row:
 
    ```
@@ -102,6 +105,7 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    This embeds each row's contiguous arc on a ring of size `N`, creating **low-discrepancy phase spreading** that reduces collisions.
 
 4. **Column Permutations**
+
    Apply independent random column permutations to `S_rot` and `T_rot`:
 
    ```
@@ -112,6 +116,7 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    Column permutations redistribute bits horizontally without altering the row-wise phase spreading effect. This preserves row sums while destroying geometric correlations. Each matrix uses a different seed-derived permutation.
 
 5. **OPTIONAL: Global Row Permutations (Independent for S and T)**
+
    Apply independent row permutations to both matrices:
 
    ```
@@ -142,6 +147,7 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    - Preserves the Phase Router’s **deterministic, low-discrepancy behavior**
 
 6. **Transpose T 90° Clockwise**
+
    Rotate T 90° clockwise (transpose) to align its columns with the output rows:
 
    ```
@@ -151,6 +157,8 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    This preserves the phase offsets applied in Step 3 while preparing `T` for the intersection.
 
 7. **Bitwise Intersection & Seed-deterministic Randomized Top-k Extraction**
+
+   Boolean AND of S and T:
 
    ```
    O[i] = S_final[i] & T_final[i]
