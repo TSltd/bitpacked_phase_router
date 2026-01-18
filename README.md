@@ -220,6 +220,16 @@ Practical use cases include Mixture-of-Experts (MoE), sparse attention, and load
 | Greedy Balancer  | ✗       | ✓             | Strong          | ✓             | ✓            |
 | **Phase Router** | ✗       | ✓             | **Statistical** | **✓**         | ✗            |
 
+**Hash Router vs Phase Router**
+
+| Feature                    | Hash Router        | Phase Router         |
+| -------------------------- | ------------------ | -------------------- |
+| Column Skew                | Higher (worse)     | Lower (better)       |
+| Max Column Load            | Higher / bursty    | Lower / balanced     |
+| Runtime                    | Faster             | Slower               |
+| Determinism                | Seed-deterministic | Seed-deterministic   |
+| Handling Structured Inputs | Prone to hotspots  | Smooth, decorrelated |
+
 **Chung–Lu vs Phase Router**:
 
 | Feature         | Chung–Lu          | Phase Router             |
@@ -228,6 +238,8 @@ Practical use cases include Mixture-of-Experts (MoE), sparse attention, and load
 | Edge Caps       | None              | Hard k-cap               |
 | Reproducibility | ✗                 | ✓ (seed-deterministic)   |
 | Geometry Bias   | ✗                 | Explicit phase mixing    |
+
+The Phase Router produces lower column skew and more balanced routing compared with a hash router, while remaining deterministic and enforcing a hard per-row fan-out limit. It is well-suited for large-scale MoE routing, sparse attention, or other bipartite routing tasks where predictable load distribution and handling of structured inputs are important, even if it is somewhat slower than a simple hash-based approach.
 
 ---
 
