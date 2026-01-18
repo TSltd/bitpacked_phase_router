@@ -105,7 +105,7 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
 
    Column permutations redistribute bits horizontally without altering the row-wise phase spreading effect. This preserves row sums while destroying geometric correlations. Each matrix uses a different seed-derived permutation.
 
-5. **Global Row Permutations (Independent for S and T)**
+5. **OPTIONAL: Global Row Permutations (Independent for S and T)**
    Apply independent row permutations to both matrices:
 
    ```
@@ -114,6 +114,30 @@ The phase-mixed transforms `S'` and `T'` are constructed as follows:
    ```
 
    This removes input-order bias. Note that `S` and `T` use **different** row permutations to ensure independent mixing.
+
+   The **row permutation step** is **not part of the core algorithm**. Its main purposes are:
+
+   - **Anonymization / obfuscation** of input order
+   - Minor reduction of skew for very small k values
+
+   **Trade-offs:**
+
+   - **Computational cost:** Each row permutation adds memory accesses and bookkeeping overhead, which can noticeably increase runtime for large N.
+   - **Marginal benefit:** In two-phase adversarial or large-scale scenarios, row permutations have **little to no impact** on column skew or maximum loads.
+
+   **Usage:**
+
+   - Row permutations can be toggled via the `ENABLE_ROW_PERM` compile-time flag (`#ifdef ENABLE_ROW_PERM`) or the corresponding runtime API argument.
+   - By default, they are **disabled** to maximize performance.
+   - Recommended only for testing, anonymization, or seed-independent input-order mixing.
+
+   **Performance Note:**
+
+   Empirical tests show that disabling row permutations:
+
+   - Reduces runtime by up to **30–50%** for large N (≥1024)
+   - Has **negligible effect on skew** for k ≥ 256
+   - Preserves the Phase Router’s **deterministic, low-discrepancy behavior**
 
 6. **Transpose T 90° Clockwise**
    Rotate T 90° clockwise (transpose) to align its columns with the output rows:

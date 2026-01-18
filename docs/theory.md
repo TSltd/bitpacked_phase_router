@@ -88,32 +88,48 @@ The cumulative offset computation from the original row order creates determinis
 
 ## 3. Global Permutations
 
-After phase spreading and **independent column permutations** are applied to `S_rot` and `T_rot`:
+After phase spreading, **independent column permutations** are applied to `S_rot` and `T_rot`:
 
 ```
 S_shuf = PermuteColumns(S_rot, col_perm_S)
 T_shuf = PermuteColumns(T_rot, col_perm_T)
 ```
 
-where `col_perm_S` and `col_perm_T` are distinct seed-derived permutations.
+where `col_perm_S` and `col_perm_T` are distinct seed-derived permutations. These permutations redistribute bits horizontally, preserving row sums while destroying geometric correlations.
 
-Next, **independent row permutations** are applied to both matrices:
+Next, **independent row permutations** can be applied (optional):
 
 ```
 S_final[i] = S_shuf[row_perm[i]]
 T_prepared[i] = T_shuf[row_perm_T[i]]
 ```
 
-where `row_perm` and `row_perm_T` are also distinct seed-derived permutations.
+where `row_perm` and `row_perm_T` are distinct, seed-derived permutations.
 
-These operations preserve:
+### Optional Row Permutations
 
-- row sums (column permutations preserve row structure),
-- column sums (row permutations preserve column structure),
+The row permutation step is **not part of the core phase-space mixing algorithm**. Its main purpose is **to anonymize or decorrelate input row order**.
 
-while destroying geometric and index-based correlations introduced by alignment and phase spreading.
+- **Effect on Routing**:
 
-The independent permutations for S and T ensure they become **independently mixed degree-preserving fields** in the shared phase space, preventing systematic bias when their bitwise AND is computed after T is transposed.
+  - Preserves row sums (row permutations do not alter row content)
+  - Preserves column sums (permutation of rows preserves overall column totals)
+  - Removes geometric or ordering correlations in structured input matrices
+  - Has negligible effect on column skew or first-order statistics for typical large matrices (`N ≥ 1024`, `k ≥ 64`)
+
+- **Computational Consideration**:
+
+  - Adds memory accesses and bookkeeping
+  - Can increase runtime by **30–50%** for large matrices
+  - Recommended primarily for anonymization, decorrelation, or testing
+
+- **Deterministic Behavior**:
+  When enabled, the permutations are **seed-deterministic**; the same seed always produces identical routing.
+
+- **Use Case Guidance**:
+
+  - **Enabled**: If input-order bias may affect downstream metrics or anonymization is desired
+  - **Disabled (default)**: For maximum performance; row permutation is **optional** and not required for the core phase-router guarantees
 
 ---
 

@@ -24,6 +24,8 @@
 #define ROUTER_DUMP_INTERMEDIATE 0
 #define ROUTER_ROTATE_SELF_CHECK 0
 #define ROUTER_VALIDATE 0
+// Enable / disable global row permutation
+#define ROUTER_ENABLE_ROW_PERM 0
 
 namespace py = pybind11;
 
@@ -374,15 +376,34 @@ static void phase_router_bitpacked(
     std::vector<uint64_t> S_final(N * NB_words);
     std::vector<uint64_t> T_prepared(N * NB_words);
 
+#if ROUTER_ENABLE_ROW_PERM
 #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < N; i++)
     {
         size_t src_S = row_perm[i];
         size_t src_T = row_perm_T[i];
 
-        std::memcpy(&S_final[i * NB_words], &S_shuf[src_S * NB_words], NB_words * sizeof(uint64_t));
-        std::memcpy(&T_prepared[i * NB_words], &T_shuf[src_T * NB_words], NB_words * sizeof(uint64_t));
+        std::memcpy(&S_final[i * NB_words],
+                    &S_shuf[src_S * NB_words],
+                    NB_words * sizeof(uint64_t));
+
+        std::memcpy(&T_prepared[i * NB_words],
+                    &T_shuf[src_T * NB_words],
+                    NB_words * sizeof(uint64_t));
     }
+#else
+#pragma omp parallel for schedule(static)
+    for (size_t i = 0; i < N; i++)
+    {
+        std::memcpy(&S_final[i * NB_words],
+                    &S_shuf[i * NB_words],
+                    NB_words * sizeof(uint64_t));
+
+        std::memcpy(&T_prepared[i * NB_words],
+                    &T_shuf[i * NB_words],
+                    NB_words * sizeof(uint64_t));
+    }
+#endif
 
     // -------------------- Step 5: Rotate T 90° clockwise --------------------
     std::vector<uint64_t> T_final(N * NB_words, 0);
@@ -759,11 +780,20 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
                              ? std::chrono::high_resolution_clock::now().time_since_epoch().count()
                              : seed;
 
+#if ROUTER_ENABLE_ROW_PERM
     std::mt19937_64 rng_rows(seed_base ^ 0xA5A5A5A5A5A5A5A5ULL);
     std::shuffle(row_perm.begin(), row_perm.end(), rng_rows);
 
     std::mt19937_64 rng_Trows(seed_base ^ 0xC6BC279692B5C323ULL);
     std::shuffle(row_perm_T.begin(), row_perm_T.end(), rng_Trows);
+#else
+    // Identity permutation
+    for (size_t i = 0; i < N; i++)
+    {
+        row_perm[i] = i;
+        row_perm_T[i] = i;
+    }
+#endif
 
     std::mt19937_64 rng_S(seed_base ^ 0x9E3779B97F4A7C15ULL);
     std::mt19937_64 rng_T(seed_base ^ 0xD1B54A32D192ED03ULL);
