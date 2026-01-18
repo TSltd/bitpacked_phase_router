@@ -20,8 +20,8 @@
 #include <unistd.h>
 #include <cmath>
 
-#define ROUTER_ENABLE_DUMP 0
-#define ROUTER_DUMP_INTERMEDIATE 0
+#define ROUTER_ENABLE_DUMP 1
+#define ROUTER_DUMP_INTERMEDIATE 1
 #define ROUTER_ROTATE_SELF_CHECK 0
 #define ROUTER_VALIDATE 0
 // Enable / disable global row permutation
@@ -506,6 +506,8 @@ static void phase_router_bitpacked(
         fs::path dump_folder = debug_prefix; // folder passed from Python
         fs::create_directories(dump_folder); // ensure it exists
 
+        dump_pbm_bits((dump_folder / "S_aligned.pbm").string().c_str(), S_bits, N, NB_words);
+        dump_pbm_bits((dump_folder / "T_aligned.pbm").string().c_str(), T_bits, N, NB_words);
         dump_pbm_bits((dump_folder / "S_rot.pbm").string().c_str(), S_rot.data(), N, NB_words);
         dump_pbm_bits((dump_folder / "T_rot.pbm").string().c_str(), T_rot.data(), N, NB_words);
         dump_pbm_bits((dump_folder / "S_shuf.pbm").string().c_str(), S_shuf.data(), N, NB_words);
