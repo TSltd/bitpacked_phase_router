@@ -230,6 +230,8 @@ Practical use cases include Mixture-of-Experts (MoE), sparse attention, and load
 | Determinism                | Seed-deterministic | Seed-deterministic   |
 | Handling Structured Inputs | Prone to hotspots  | Smooth, decorrelated |
 
+For more detail, see [`phase_router_vs_hash_router_tables.md`](docs/phase_router_vs_hash_router_tables.md)
+
 **Chung–Lu vs Phase Router**:
 
 | Feature         | Chung–Lu          | Phase Router             |
