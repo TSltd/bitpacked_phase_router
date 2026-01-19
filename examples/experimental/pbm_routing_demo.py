@@ -13,7 +13,7 @@ import numpy as np
 from pathlib import Path
 from PIL import Image
 from scipy.sparse import csr_matrix
-import router_py as router_module  # your router_py.py wrapper
+import router_py as router_module 
 
 def load_pbm_sparse(path: str) -> csr_matrix:
     """Load a PBM image as a sparse CSR matrix of 0/1"""

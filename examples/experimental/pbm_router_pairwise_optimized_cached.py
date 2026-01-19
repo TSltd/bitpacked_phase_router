@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
-import router  # your pybind11 module
+import router 
 
 CACHE_DIR = "pbm_cache"
 

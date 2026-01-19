@@ -30,3 +30,6 @@ debug_dumps/
 
 # Dev files
 dev/
+
+# Training data
+data/

@@ -20,8 +20,8 @@
 #include <unistd.h>
 #include <cmath>
 
-#define ROUTER_ENABLE_DUMP 1
-#define ROUTER_DUMP_INTERMEDIATE 1
+#define ROUTER_ENABLE_DUMP 0
+#define ROUTER_DUMP_INTERMEDIATE 0
 #define ROUTER_ROTATE_SELF_CHECK 0
 #define ROUTER_VALIDATE 0
 // Enable / disable global row permutation

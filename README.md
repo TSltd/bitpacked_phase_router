@@ -299,6 +299,12 @@ The Phase Router achieves **exceptional performance** through bit-packed operati
 
 ## **Build & Run (Quick Start)**
 
+> Ensure your virtual environment is activated before installing dependencies:
+
+```
+source .venv/bin/activate
+```
+
 ### **Dependencies**
 
 - Required: Python 3.x, NumPy, pybind11, setuptools, C++ compiler (`g++`, `clang++`, MSVC)
@@ -310,8 +316,6 @@ Install dependencies:
 # From project root
 pip install -r requirements.txt
 ```
-
-> Ensure your virtual environment is activated before installing.
 
 ## Quick Start
 

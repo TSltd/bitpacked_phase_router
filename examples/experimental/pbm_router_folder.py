@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
-import router  # your pybind11 module
+import router
 
 def pbm_to_array(pbm_path):
     """Load PBM image as 2D uint8 array of 0s and 1s."""
