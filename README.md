@@ -295,29 +295,82 @@ The Phase Router achieves **exceptional performance** through bit-packed operati
 - Permutations are cache-friendly (sequential reads after shuffle)
 - Phase rotations wrap across word boundaries with minimal branching
 
----
-
 ## **Build & Run (Quick Start)**
 
-> Ensure your virtual environment is activated before installing dependencies:
-
-```
-source .venv/bin/activate
-```
-
-### **Dependencies**
-
-- Required: Python 3.x, NumPy, pybind11, setuptools, C++ compiler (`g++`, `clang++`, MSVC)
-- Optional: OpenMP (multi-threading), pandas, matplotlib, pillow, SciPy, PyTorch
-
-Install dependencies:
+### Clone the repository
 
 ```bash
-# From project root
+git clone https://github.com/TSltd/bitpacked_phase_router.git
+```
+
+### Enter the Project Directory
+
+```bash
+cd bitpacked_phase_router
+```
+
+### Recommended: Docker
+
+> **No local Python, virtualenv, or system dependencies required.**
+
+#### **Build Docker Image**
+
+```bash
+docker build -t phase_router_tests .
+```
+
+#### **Run All Experiments**
+
+```bash
+docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/results:/app/results" phase_router_tests
+```
+
+- Runs **all evaluation scripts back-to-back**
+- Builds the C++ / pybind backend inside the container
+- Saves all CSV, JSON, plots, and Markdown summaries to `./results/`
+- Uses all memory available to Docker (no artificial limits)
+
+> **Windows (Docker Desktop):**
+> Ensure Docker Desktop → _Settings → Resources → Memory_ is set sufficiently high.
+
+---
+
+### Optional: Local / Developer Setup
+
+> If you want to modify or debug the code outside Docker.
+
+#### **Dependencies**
+
+- **Python:** 3.10+ (tested with 3.10/3.12)
+- **Core Python packages:** (all listed in `requirements.txt`)
+  - numpy ≥ 1.21
+  - pandas ≥ 1.3
+  - matplotlib ≥ 3.4
+  - pillow ≥ 8.0
+  - scipy ≥ 1.7
+  - torch ≥ 2.0
+  - tabulate
+
+- **Build dependencies:**
+  - pybind11 ≥ 2.6
+  - setuptools ≥ 58
+
+- **System / Compiler:**
+  - C++ compiler: `g++`, `clang++`, or MSVC
+  - OpenMP support for multi-threading (optional but recommended)
+  - psutil ≥ 5.9 (for system benchmarking, optional)
+
+#### **Setup Virtual Environment and install dependencies**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Quick Start
+---
+
+## **Local Execution (Without Docker)**
 
 ### **1. Build C++ Backend**
 
@@ -333,39 +386,39 @@ python setup.py build_ext --inplace
 python evaluation/phase_router_test.py
 ```
 
-- **Batch execution script** for comprehensive scaling experiments
+- **Batch execution script** (full scaling sweep):
 
 ```bash
 python evaluation/phase_router_run.py
 ```
 
-- **Stress test** comparing the bit-packed **phase router** against a simple **hash-based router**
+- **Stress test**: Phase Router vs Hash Router
 
 ```bash
 python evaluation/phase_router_vs_hash.py --skip-plots
 ```
 
-(Plots optional)
+[Stress test documentation](docs/phase_router_vs_hash.md)
 
-[Stress test documentation and usage instructions](docs/phase_router_vs_hash.md)
-
-- **10-point multi-test** to probe **load balance, determinism, composability, and failure modes**
+- **10-point multi-test** probing load balance, determinism, composability, and failure modes:
 
 ```bash
 python evaluation/phase_router_test_matrix.py
 ```
 
-[Test matrix documentation and usage instructions](docs/phase_router_test_matrix.md)
+[Test matrix documentation](docs/phase_router_test_matrix.md)
 
-### **3. Examples**
+---
 
-- **Demo with random binary matrices** (NumPy/PyTorch, routes + stats output):
+## **Examples**
+
+- **Random binary matrix routing demo**:
 
 ```bash
 python examples/demo_router.py
 ```
 
-- **MoE capacity planning** and overflow analysis:
+- **MoE capacity planning & overflow analysis**:
 
 ```bash
 python examples/moe_routing_demo.py
