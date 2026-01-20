@@ -337,6 +337,21 @@ docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/results:/app/results" phase_rou
 
 ---
 
+## Cleanup
+
+Remove Docker containers/images:
+
+```bash
+docker container prune        # remove stopped containers
+docker image rm phase_router_tests
+```
+
+Remove cloned repo:
+
+```
+rm -rf bitpacked_phase_router
+```
+
 ### Optional: Local / Developer Setup
 
 > If you want to modify or debug the code outside Docker.
