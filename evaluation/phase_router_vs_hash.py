@@ -370,7 +370,13 @@ def write_csv(rows, headers, path: Path):
         for row in rows:
             writer.writerow(row)
 
-def make_summary_md(results: dict, md_path: Path, plot_dir: Path, routing_time_plot: Path = None):
+def make_summary_md(
+    results: dict,
+    md_path: Path,
+    plot_dir: Path,
+    routing_time_plot: Path = None
+):
+    import os
     import re
 
     lines = []
@@ -379,15 +385,22 @@ def make_summary_md(results: dict, md_path: Path, plot_dir: Path, routing_time_p
     # Overall Routing Time Plot
     # -------------------------------
     if routing_time_plot and routing_time_plot.exists():
+        rel_path = os.path.relpath(routing_time_plot, start=md_path.parent)
         lines.append("## Overall Routing Time\n")
-        lines.append(f'<img src="{routing_time_plot.relative_to(md_path.parent)}" width="600">\n')
+        lines.append(f'<img src="{rel_path}" width="600">\n')
 
     # -------------------------------
     # Single-Phase Table
     # -------------------------------
     lines.append("## Single-Phase Stress Sweep\n")
-    lines.append("| k | Phase Router Time (ms) | Active Routes | Routes/Row | Column Skew | Fill Ratio | Hash Router Time (ms) | Hash Column Skew |")
-    lines.append("|---|-----------------------|---------------|------------|-------------|------------|----------------------|-----------------|")
+    lines.append(
+        "| k | Phase Router Time (ms) | Active Routes | Routes/Row | "
+        "Column Skew | Fill Ratio | Hash Router Time (ms) | Hash Column Skew |"
+    )
+    lines.append(
+        "|---|-----------------------|---------------|------------|"
+        "-------------|------------|----------------------|-----------------|"
+    )
 
     for entry in results["single_phase"]:
         k = entry["k"]
@@ -400,10 +413,14 @@ def make_summary_md(results: dict, md_path: Path, plot_dir: Path, routing_time_p
         hash_time = entry["hash_router"]["time_ms"]
         hash_skew = entry["hash_router"]["stats"]["col_skew"]
 
-        lines.append(f"| {k} | {phase_time:.1f} | {active_routes} | {routes_per_row:.4f} | {col_skew:.2f} | {fill_ratio:.5f} | {hash_time:.1f} | {hash_skew:.2f} |")
+        lines.append(
+            f"| {k} | {phase_time:.1f} | {active_routes} | "
+            f"{routes_per_row:.4f} | {col_skew:.2f} | {fill_ratio:.5f} | "
+            f"{hash_time:.1f} | {hash_skew:.2f} |"
+        )
 
     # -------------------------------
-    # Single-Phase Plots (small, side-by-side)
+    # Single-Phase Plots
     # -------------------------------
     lines.append("\n### Single-Phase Plots\n")
     if plot_dir.exists():
@@ -411,16 +428,29 @@ def make_summary_md(results: dict, md_path: Path, plot_dir: Path, routing_time_p
             imgs = sorted(plot_dir.glob(f"*phase1_column_load_k{k_val}*.png"))
             if imgs:
                 lines.append(f"#### k={k_val}")
-                img_line = " ".join(f'<img src="{img.relative_to(md_path.parent)}" width="250">' for img in imgs)
-                lines.append(img_line)
-                lines.append("")  # blank line
+                img_tags = []
+                for img in imgs:
+                    rel_img = os.path.relpath(img, start=md_path.parent)
+                    img_tags.append(f'<img src="{rel_img}" width="250">')
+                lines.append(" ".join(img_tags))
+                lines.append("")
 
     # -------------------------------
     # Two-Phase Table
     # -------------------------------
     lines.append("\n## Two-Phase Adversarial Test\n")
-    lines.append("| k | Phase Router Phase 1 Time (ms) | Phase Router Phase 2 Time (ms) | Phase 2 Max Column Load | Phase 2 Column Skew | Hash Router Phase 1 Time (ms) | Hash Router Phase 2 Time (ms) | Hash Phase 2 Max Column Load | Hash Phase 2 Column Skew |")
-    lines.append("|---|-------------------------------|-------------------------------|------------------------|------------------|-------------------------------|-------------------------------|---------------------------|-------------------------|")
+    lines.append(
+        "| k | Phase Router Phase 1 Time (ms) | Phase Router Phase 2 Time (ms) | "
+        "Phase 2 Max Column Load | Phase 2 Column Skew | "
+        "Hash Router Phase 1 Time (ms) | Hash Router Phase 2 Time (ms) | "
+        "Hash Phase 2 Max Column Load | Hash Phase 2 Column Skew |"
+    )
+    lines.append(
+        "|---|-------------------------------|-------------------------------|"
+        "------------------------|------------------|"
+        "-------------------------------|-------------------------------|"
+        "---------------------------|-------------------------|"
+    )
 
     for entry in results["two_phase_adversarial"]:
         k = entry["k"]
@@ -437,10 +467,15 @@ def make_summary_md(results: dict, md_path: Path, plot_dir: Path, routing_time_p
         hash2_max = hash2_stats["col_max"]
         hash2_skew = hash2_stats["col_skew"]
 
-        lines.append(f"| {k} | {phase1_time:.1f} | {phase2_time:.1f} | {phase2_max} | {phase2_skew:.2f} | {hash1_time:.1f} | {hash2_time:.1f} | {hash2_max} | {hash2_skew:.2f} |")
+        lines.append(
+            f"| {k} | {phase1_time:.1f} | {phase2_time:.1f} | "
+            f"{phase2_max} | {phase2_skew:.2f} | "
+            f"{hash1_time:.1f} | {hash2_time:.1f} | "
+            f"{hash2_max} | {hash2_skew:.2f} |"
+        )
 
     # -------------------------------
-    # Two-Phase Plots (small, side-by-side)
+    # Two-Phase Plots
     # -------------------------------
     lines.append("\n### Two-Phase Plots\n")
     if plot_dir.exists():
@@ -448,11 +483,17 @@ def make_summary_md(results: dict, md_path: Path, plot_dir: Path, routing_time_p
             imgs = sorted(plot_dir.glob(f"*phase_router*_k{k_val}*.png"))
             if imgs:
                 lines.append(f"#### k={k_val}")
-                img_line = " ".join(f'<img src="{img.relative_to(md_path.parent)}" width="250">' for img in imgs)
-                lines.append(img_line)
-                lines.append("")  # blank line
+                img_tags = []
+                for img in imgs:
+                    rel_img = os.path.relpath(img, start=md_path.parent)
+                    img_tags.append(f'<img src="{rel_img}" width="250">')
+                lines.append(" ".join(img_tags))
+                lines.append("")
 
+    # -------------------------------
     # Write file
+    # -------------------------------
+    md_path.parent.mkdir(parents=True, exist_ok=True)
     with open(md_path, "w") as f:
         f.write("\n".join(lines))
 
