@@ -6,6 +6,18 @@ Implements correctness validation, statistical analysis, and performance metrics
 for the deterministic phase-separated routing algorithm.
 
 This module uses the single-phase routing approach from router.cpp.
+
+USAGE:
+To run standalone quick test:
+Linux:
+RUN_QUICK_TEST=1 python evaluation/phase_router_test.py
+Windows (PowerShell):
+$env:RUN_QUICK_TEST="1"
+python evaluation/phase_router_test.py
+Docker:
+docker run --rm -e RUN_QUICK_TEST=1 -v $(pwd)/results:/app/results phase_router_tests
+
+
 """
 
 import numpy as np
@@ -397,24 +409,28 @@ def make_json_serializable(obj):
 # ============================================================================
 
 if __name__ == "__main__":
-    """Quick test with small N"""
-    print("Running quick test with N=256, k=32")
-    
-    metrics = run_single_test(
-        N=256,
-        k=32,
-        seed_S=42,
-        seed_T=123,
-        dump_prefix=str(OUT_TEST / "quick_test"),
-        validate=True
-    )
-    
-    # Save metrics
-    output_path = OUT_TEST / "quick_test"
-    output_path.mkdir(parents=True, exist_ok=True)
+    # Only run quick test if RUN_QUICK_TEST env var is set to "1"
+    if os.environ.get("RUN_QUICK_TEST", "0") == "1":
+        print("Running quick test with N=256, k=32")
+        
+        metrics = run_single_test(
+            N=256,
+            k=32,
+            seed_S=42,
+            seed_T=123,
+            dump_prefix=str(OUT_TEST / "quick_test"),
+            validate=True
+        )
+        
+        # Save metrics
+        output_path = OUT_TEST / "quick_test"
+        output_path.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path / "metrics.json", "w") as f:
-        json.dump(make_json_serializable(metrics), f, indent=2)
+        with open(output_path / "metrics.json", "w") as f:
+            json.dump(make_json_serializable(metrics), f, indent=2)
 
-    print(f"\n✓ Test completed successfully!")
-    print(f"Results saved to: {output_path}")
+        print(f"\n✓ Test completed successfully!")
+        print(f"Results saved to: {output_path}")
+    else:
+        print("Quick test skipped. Set RUN_QUICK_TEST=1 to enable it.")
+

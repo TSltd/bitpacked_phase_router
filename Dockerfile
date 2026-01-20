@@ -1,3 +1,4 @@
+# Base image
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -30,5 +31,5 @@ RUN python setup.py build_ext --inplace
 # ---- ensure results directory exists ----
 RUN mkdir -p /app/results
 
-# ---- run all benchmarks on container start ----
+# ---- run full benchmark suite on container start ----
 CMD ["bash", "run_all.sh"]
