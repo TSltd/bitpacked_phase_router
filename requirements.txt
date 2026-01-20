@@ -5,6 +5,8 @@ matplotlib>=3.4.0
 pillow>=8.0.0
 scipy>=1.7.0          # For sparse matrices and linear algebra
 torch>=2.0.0          # PyTorch for tensor ops / MoE routing
+tabulate
+
 
 # Build dependencies
 pybind11>=2.6.0

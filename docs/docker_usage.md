@@ -1,5 +1,17 @@
 ## Usage
 
+### Clone the repository
+
+```bash
+git clone https://github.com/TSltd/bitpacked_phase_router.git
+```
+
+### Go into the cloned repo
+
+```bash
+cd bitpacked_phase_router
+```
+
 ### Build Docker Image
 
 ```bash
