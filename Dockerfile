@@ -7,15 +7,14 @@ WORKDIR /app
 # ---- system dependencies ----
 RUN apt-get update && apt-get install -y \
     build-essential \
-    python3.12 \
-    python3.12-dev \
+    python3 \
+    python3-dev \
     python3-pip \
     git \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.12 default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
 # ---- python deps ----
 COPY requirements.txt .
