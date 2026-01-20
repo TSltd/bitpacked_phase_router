@@ -295,7 +295,9 @@ The Phase Router achieves **exceptional performance** through bit-packed operati
 - Permutations are cache-friendly (sequential reads after shuffle)
 - Phase rotations wrap across word boundaries with minimal branching
 
-## **Build & Run (Quick Start)**
+---
+
+# **Build & Run (Quick Start)**
 
 ### Clone the repository
 
@@ -489,7 +491,9 @@ fixed `(S, T, k)` + seed → deterministic routing `O(seed)`
 | `edge_density`        | ∑mean_load/(N²)                | Empirical sparsity                     |
 | `theoretical_density` | k/N                            | Expected sparsity                      |
 
-## **Note:** These are seed-averaged and not Monte-Carlo independent-edge estimates
+**Note:** These are seed-averaged and not Monte-Carlo independent-edge estimates
+
+---
 
 ## **Adversarial Inputs**
 
@@ -498,20 +502,6 @@ fixed `(S, T, k)` + seed → deterministic routing `O(seed)`
 - Guarantees apply to benign or random-like degree inputs
 
 - Adversarially constructed inputs may violate mixing assumptions if seed is known
-
----
-
-## **Experimental Setup**
-
-- Matrix sizes N: 256 → 4096
-
-- Max connections per row/column k: 8 → 512
-
-- Trials: 3 runs per config; reproducibility tests: 5 runs
-
-- Metrics collected: row/column statistics, fill ratio, runtime
-
-- Routing: `O = S' ∧ T'^T` using fully bit-packed implementation
 
 ---
 
