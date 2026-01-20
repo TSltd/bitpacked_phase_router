@@ -21,6 +21,17 @@ from datetime import datetime
 sys.path.append(str(Path(__file__).parent.parent))
 import router
 
+RESULTS_ROOT = Path(os.environ.get("PHASE_ROUTER_RESULTS", "results/phase_router_vs_hash")).resolve()
+
+OUT_SINGLE = RESULTS_ROOT / "single_phase"
+OUT_TWO = RESULTS_ROOT / "two_phase_adversarial"
+OUT_PLOTS = RESULTS_ROOT / "plots"
+
+OUT_SINGLE.mkdir(parents=True, exist_ok=True)
+OUT_TWO.mkdir(parents=True, exist_ok=True)
+OUT_PLOTS.mkdir(parents=True, exist_ok=True)
+
+
 # ============================================================================
 # Memory and Logging Utilities
 # ============================================================================
@@ -251,7 +262,7 @@ def run_two_phase_adversarial_test(N: int, k: int):
 
     if not SKIP_PLOTS:
         log("Plotting column loads...")
-        plot_column_loads(N, k, load_phase, load_hash, out_dir=out / "plots", prefix="phase2_column_load")
+        plot_column_loads(N, k, load_phase, load_hash, out_dir=OUT_PLOTS, prefix=f"phase1_column_load_k{k}")
         del load_phase, load_hash
         log("Plots completed and column load arrays released")
 
@@ -359,6 +370,121 @@ def write_csv(rows, headers, path: Path):
         for row in rows:
             writer.writerow(row)
 
+def make_summary_md(results: dict, md_path: Path, plot_dir: Path, routing_time_plot: Path = None):
+    import re
+
+    lines = []
+
+    # -------------------------------
+    # Overall Routing Time Plot
+    # -------------------------------
+    if routing_time_plot and routing_time_plot.exists():
+        lines.append("## Overall Routing Time\n")
+        lines.append(f'<img src="{routing_time_plot.relative_to(md_path.parent)}" width="600">\n')
+
+    # -------------------------------
+    # Single-Phase Table
+    # -------------------------------
+    lines.append("## Single-Phase Stress Sweep\n")
+    lines.append("| k | Phase Router Time (ms) | Active Routes | Routes/Row | Column Skew | Fill Ratio | Hash Router Time (ms) | Hash Column Skew |")
+    lines.append("|---|-----------------------|---------------|------------|-------------|------------|----------------------|-----------------|")
+
+    for entry in results["single_phase"]:
+        k = entry["k"]
+        phase_time = entry["phase_router"]["time_ms"]
+        active_routes = entry["phase_router"]["fill"]["active_routes"]
+        routes_per_row = entry["phase_router"]["fill"]["routes_per_row"]
+        col_skew = entry["phase_router"]["stats"]["col_skew"]
+        fill_ratio = entry["phase_router"]["fill"]["fill_ratio"]
+
+        hash_time = entry["hash_router"]["time_ms"]
+        hash_skew = entry["hash_router"]["stats"]["col_skew"]
+
+        lines.append(f"| {k} | {phase_time:.1f} | {active_routes} | {routes_per_row:.4f} | {col_skew:.2f} | {fill_ratio:.5f} | {hash_time:.1f} | {hash_skew:.2f} |")
+
+    # -------------------------------
+    # Single-Phase Plots (small, side-by-side)
+    # -------------------------------
+    lines.append("\n### Single-Phase Plots\n")
+    if plot_dir.exists():
+        for k_val in sorted({r["k"] for r in results["single_phase"]}):
+            imgs = sorted(plot_dir.glob(f"*phase1_column_load_k{k_val}*.png"))
+            if imgs:
+                lines.append(f"#### k={k_val}")
+                img_line = " ".join(f'<img src="{img.relative_to(md_path.parent)}" width="250">' for img in imgs)
+                lines.append(img_line)
+                lines.append("")  # blank line
+
+    # -------------------------------
+    # Two-Phase Table
+    # -------------------------------
+    lines.append("\n## Two-Phase Adversarial Test\n")
+    lines.append("| k | Phase Router Phase 1 Time (ms) | Phase Router Phase 2 Time (ms) | Phase 2 Max Column Load | Phase 2 Column Skew | Hash Router Phase 1 Time (ms) | Hash Router Phase 2 Time (ms) | Hash Phase 2 Max Column Load | Hash Phase 2 Column Skew |")
+    lines.append("|---|-------------------------------|-------------------------------|------------------------|------------------|-------------------------------|-------------------------------|---------------------------|-------------------------|")
+
+    for entry in results["two_phase_adversarial"]:
+        k = entry["k"]
+
+        phase1_time = entry["phase_router"]["time_ms"]["phase1"]
+        phase2_time = entry["phase_router"]["time_ms"]["phase2"]
+        phase2_stats = entry["phase_router"]["phase2"]
+        phase2_max = phase2_stats["col_max"]
+        phase2_skew = phase2_stats["col_skew"]
+
+        hash1_time = entry["hash_router"]["time_ms"]["phase1"]
+        hash2_time = entry["hash_router"]["time_ms"]["phase2"]
+        hash2_stats = entry["hash_router"]["phase2"]
+        hash2_max = hash2_stats["col_max"]
+        hash2_skew = hash2_stats["col_skew"]
+
+        lines.append(f"| {k} | {phase1_time:.1f} | {phase2_time:.1f} | {phase2_max} | {phase2_skew:.2f} | {hash1_time:.1f} | {hash2_time:.1f} | {hash2_max} | {hash2_skew:.2f} |")
+
+    # -------------------------------
+    # Two-Phase Plots (small, side-by-side)
+    # -------------------------------
+    lines.append("\n### Two-Phase Plots\n")
+    if plot_dir.exists():
+        for k_val in sorted({r["k"] for r in results["two_phase_adversarial"]}):
+            imgs = sorted(plot_dir.glob(f"*phase_router*_k{k_val}*.png"))
+            if imgs:
+                lines.append(f"#### k={k_val}")
+                img_line = " ".join(f'<img src="{img.relative_to(md_path.parent)}" width="250">' for img in imgs)
+                lines.append(img_line)
+                lines.append("")  # blank line
+
+    # Write file
+    with open(md_path, "w") as f:
+        f.write("\n".join(lines))
+
+    print(f"Markdown report written to {md_path}")
+
+def collect_plot_paths(plot_dir: Path, all_results: dict) -> dict:
+    """
+    Collect PNG paths for each k in single- and two-phase tests
+    and return a dictionary suitable for including in JSON.
+    """
+    plot_info = {"single_phase": {}, "two_phase_adversarial": {}}
+
+    # Single-phase plots
+    for entry in all_results["single_phase"]:
+        k = entry["k"]
+        imgs = sorted(plot_dir.glob(f"*phase1_column_load_k{k}*.png"))
+        plot_info["single_phase"][k] = [str(p.relative_to(plot_dir.parent)) for p in imgs]
+
+    # Two-phase plots (both phase router and hash)
+    for entry in all_results["two_phase_adversarial"]:
+        k = entry["k"]
+        imgs = sorted(plot_dir.glob(f"*phase_router*_k{k}*.png"))
+        plot_info["two_phase_adversarial"][k] = [str(p.relative_to(plot_dir.parent)) for p in imgs]
+
+    # Overall routing time plot
+    overall_plot = plot_dir / "phase1_plus_phase2_routing_time.png"
+    if overall_plot.exists():
+        plot_info["overall_routing_time"] = str(overall_plot.relative_to(plot_dir.parent))
+
+    return plot_info
+
+
 # ============================================================================
 # CLI Argument
 # ============================================================================
@@ -367,6 +493,7 @@ parser = argparse.ArgumentParser(description="Phase router stress tests")
 parser.add_argument("--skip-plots", action="store_true", help="Disable all plotting (faster, lower memory use)")
 args = parser.parse_args()
 SKIP_PLOTS = args.skip_plots
+
 
 # ============================================================================
 # Main
@@ -377,23 +504,24 @@ if __name__ == "__main__":
     ks_single = [16, 64, 256, 1024, 4096, 12800]
     ks_two = [16, 64, 256, 1024, 4096, 12800]
 
-    out = Path("test_output")
-    out.mkdir(exist_ok=True)
-
     all_results = {"single_phase": [], "two_phase_adversarial": []}
 
     print_system_specs()
 
-    # ----------------------------
-    # Single-Phase Sweep
-    # ----------------------------
+    # ===========================
+    # 1. Single-Phase Sweep
+    # ===========================
     log("\n=== Single-phase stress sweep ===")
     single_csv_rows = []
 
     for k in ks_single:
         log(f"Processing single-phase k={k} ...")
         t_start_k = time.time()
+
+        # Phase router
         routes, stats, fill, t_ms, S, T = run_single_test(N, k, 42, 123)
+
+        # Hash router
         t0 = time.time()
         hash_routes = hash_router(S, T, k)
         hash_t_ms = (time.time() - t0) * 1000
@@ -420,23 +548,44 @@ if __name__ == "__main__":
             "hash_time_ms": hash_t_ms,
         })
 
+        # Plot column loads if enabled
         if not SKIP_PLOTS:
             load_phase = column_loads_from_routes(routes, N)
             load_hash  = column_loads_from_routes(hash_routes, N)
-            plot_column_loads(N, k, load_phase, load_hash, out_dir=out / "plots", prefix="phase1_column_load")
+            plot_column_loads(N, k, load_phase, load_hash, out_dir=OUT_PLOTS, prefix=f"phase1_column_load_k{k}")
             del load_phase, load_hash
 
         del routes, hash_routes, S, T
         log(f"Finished single-phase k={k} | elapsed {time.time() - t_start_k:.1f}s | RSS={mem_gb():.2f} GB")
 
-    write_csv(single_csv_rows, ["k", "phase_col_max", "phase_col_skew", "phase_fill_ratio", "phase_time_ms",
-                                "hash_col_max", "hash_col_skew", "hash_fill_ratio", "hash_time_ms"],
-              out / "single_phase_results.csv")
-    log(f"Single-phase CSV saved to {out / 'single_phase_results.csv'}")
+    # Save single-phase CSV
+    write_csv(single_csv_rows, [
+        "k", "phase_col_max", "phase_col_skew", "phase_fill_ratio", "phase_time_ms",
+        "hash_col_max", "hash_col_skew", "hash_fill_ratio", "hash_time_ms"
+    ], OUT_SINGLE / "single_phase_results.csv")
+    log(f"Single-phase CSV saved to {OUT_SINGLE / 'single_phase_results.csv'}")
 
-    # ----------------------------
-    # Two-Phase Adversarial Test
-    # ----------------------------
+    # ===========================
+    # Save single-phase JSON with headers
+    # ===========================
+    json_single = {
+        "title": "Single-Phase Stress Test Results",
+        "description": "Single-phase stress tests comparing the phase router vs hash router",
+        "date": datetime.now().isoformat(),
+        "N": N,
+        "ks_single": ks_single,
+        "results": all_results["single_phase"],
+        "plots": collect_plot_paths(OUT_PLOTS, {"single_phase": all_results["single_phase"], "two_phase_adversarial": []})["single_phase"]
+    }
+
+    with open(OUT_SINGLE / "single_phase_results.json", "w") as f:
+        json.dump(make_json_serializable(json_single), f, indent=2)
+    log(f"Single-phase JSON + plot metadata saved to {OUT_SINGLE / 'single_phase_results.json'}")
+
+
+    # ===========================
+    # 2. Two-Phase Adversarial Test
+    # ===========================
     log("\n=== Two-phase adversarial composability test ===")
     two_phase_csv_rows = []
 
@@ -455,12 +604,17 @@ if __name__ == "__main__":
             "phase_time_ms": int(result["phase_router"]["time_ms"]["phase1"] + result["phase_router"]["time_ms"]["phase2"]),
             "hash_time_ms": int(result["hash_router"]["time_ms"]["phase1"] + result["hash_router"]["time_ms"]["phase2"]),
         })
+
         log(f"Finished two-phase k={k} | elapsed {time.time() - t_start_k:.1f}s | RSS={mem_gb():.2f} GB")
 
-    write_csv(two_phase_csv_rows, ["k", "phase2_col_max", "phase2_col_skew", "hash2_col_max", "hash2_col_skew",
-                                  "phase_time_ms", "hash_time_ms"], out / "two_phase_adversarial_results.csv")
-    log(f"Two-phase CSV saved to {out / 'two_phase_adversarial_results.csv'}")
+    # Save two-phase CSV
+    write_csv(two_phase_csv_rows, [
+        "k", "phase2_col_max", "phase2_col_skew", "hash2_col_max", "hash2_col_skew",
+        "phase_time_ms", "hash_time_ms"
+    ], OUT_TWO / "two_phase_adversarial_results.csv")
+    log(f"Two-phase CSV saved to {OUT_TWO / 'two_phase_adversarial_results.csv'}")
 
+    # Save Markdown table
     md_rows = []
     for r in all_results["two_phase_adversarial"]:
         md_rows.append({
@@ -472,8 +626,52 @@ if __name__ == "__main__":
             "phase_time_ms": int(r["phase_router"]["time_ms"]["phase1"] + r["phase_router"]["time_ms"]["phase2"]),
             "hash_time_ms": int(r["hash_router"]["time_ms"]["phase1"] + r["hash_router"]["time_ms"]["phase2"]),
         })
-    write_markdown_table(md_rows, ["k", "phase2_max_load", "phase2_col_skew", "hash2_max_load", "hash2_col_skew", "phase_time_ms", "hash_time_ms"],
-                         out / "two_phase_adversarial_results.md")
-    log(f"Two-phase Markdown saved to {out / 'two_phase_adversarial_results.md'}")
+    write_markdown_table(md_rows, [
+        "k", "phase2_max_load", "phase2_col_skew", "hash2_max_load", "hash2_col_skew", "phase_time_ms", "hash_time_ms"
+    ], OUT_TWO / "two_phase_adversarial_results.md")
+    log(f"Two-phase Markdown saved to {OUT_TWO / 'two_phase_adversarial_results.md'}")
 
+    # ===========================
+    # 3. Save JSON with headers/metadata
+    # ===========================
+    json_output = {
+        "title": "Phase Router Stress Test Results",
+        "description": "Single- and two-phase stress tests comparing the phase router vs hash router",
+        "date": datetime.now().isoformat(),
+        "N": N,
+        "ks_single": ks_single,
+        "ks_two": ks_two,
+        "results": all_results
+    }
+
+    # ===========================
+    # 4. Generate overall routing time plot
+    # ===========================
+    if not SKIP_PLOTS:
+        routing_time_plot = OUT_PLOTS / "phase1_plus_phase2_routing_time.png"
+        plot_routing_time(all_results["two_phase_adversarial"], output_path=routing_time_plot)
+    else:
+        routing_time_plot = None
+
+    # Collect all plot paths for JSON metadata
+    plots_metadata = collect_plot_paths(OUT_PLOTS, all_results)
+    json_output["plots"] = plots_metadata
+
+    # ===========================
+    # 5. Final JSON save (single write)
+    # ===========================
+    with open(OUT_TWO / "two_phase_adversarial_results.json", "w") as f:
+        json.dump(make_json_serializable(json_output), f, indent=2)
+    log(f"JSON results + plot metadata saved to {OUT_TWO / 'two_phase_adversarial_results.json'}")
+
+    # ===========================
+    # 6. Generate Markdown summary
+    # ===========================
+    make_summary_md(
+        all_results,
+        OUT_TWO / "phase_router_summary.md",
+        OUT_PLOTS,
+        routing_time_plot=routing_time_plot
+    )
     log("All tests complete")
+                

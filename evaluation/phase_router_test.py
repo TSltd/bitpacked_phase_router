@@ -14,6 +14,8 @@ from pathlib import Path
 import json
 from typing import Dict, Tuple, List, Optional
 
+import os
+
 import sys
 from pathlib import Path
 
@@ -28,6 +30,10 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
     print("Warning: PIL not available - PBM to PNG conversion disabled")
+
+RESULTS_ROOT = Path(os.environ.get("PHASE_ROUTER_RESULTS", "results/phase_router_vs_hash")).resolve()
+OUT_TEST = RESULTS_ROOT / "phase_router_test"
+OUT_TEST.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================================
@@ -386,7 +392,6 @@ def make_json_serializable(obj):
         return bool(obj)
     return obj
 
-
 # ============================================================================
 # Quick Test Function
 # ============================================================================
@@ -400,16 +405,16 @@ if __name__ == "__main__":
         k=32,
         seed_S=42,
         seed_T=123,
-        dump_prefix="test_output/quick_test",
+        dump_prefix=str(OUT_TEST / "quick_test"),
         validate=True
     )
     
     # Save metrics
-    output_path = Path("test_output/quick_test")
+    output_path = OUT_TEST / "quick_test"
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
     with open(output_path / "metrics.json", "w") as f:
         json.dump(make_json_serializable(metrics), f, indent=2)
-    
+
     print(f"\n✓ Test completed successfully!")
     print(f"Results saved to: {output_path}")

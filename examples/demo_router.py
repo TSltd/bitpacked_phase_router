@@ -13,7 +13,6 @@ from scipy.sparse import csr_matrix
 from pathlib import Path
 import sys
 
-# Make sure the router module is importable
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 import router
 

@@ -15,11 +15,11 @@ import numpy as np
 import json
 import csv
 import time
-from pathlib import Path
 from typing import List, Dict, Optional
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
+import os
 
 import sys
 from pathlib import Path
@@ -28,6 +28,12 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 import router
+
+
+
+RESULTS_ROOT = Path(
+    os.environ.get("PHASE_ROUTER_RESULTS", "results/phase_router_run")
+).resolve()
 
 # Import test helpers from tests/ folder
 from evaluation.phase_router_test import (
@@ -405,6 +411,88 @@ def generate_plots(results: List[Dict], output_folder: Path):
     plt.close()
     print(f"Saved: {output_folder / 'fill_ratio_vs_k.png'}")
 
+# ============================================================================
+# Generate Markdown Summary Tables (inline)
+# ============================================================================
+
+def generate_summary_tables(results: List[Dict], results_root: Path):
+    import pandas as pd
+    import numpy as np
+
+    tables_dir = results_root / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    out_path = tables_dir / "summary_tables.md"
+
+    df = pd.DataFrame(results)
+
+    # Filter out failed runs
+    df = df[df["routing_time_ms"].notna()]
+
+    group = df.groupby(["N", "k"])
+
+    def fmt_mean_std(series, unit=""):
+        mean = series.mean()
+        std = series.std()
+        if unit:
+            return f"{mean:.2f} ± {std:.2f} {unit}"
+        return f"{mean:.4f} ± {std:.4f}"
+
+    # Table 1: Performance
+    perf_rows = []
+    for (N, k), g in group:
+        perf_rows.append({
+            "N": N,
+            "k": k,
+            "Routing time (ms)": fmt_mean_std(g["routing_time_ms"], "ms"),
+            "Total time (ms)": fmt_mean_std(g["total_time_ms"], "ms") if "total_time_ms" in g else "",
+        })
+    perf_df = pd.DataFrame(perf_rows).sort_values(["N", "k"])
+
+    # Table 2: Load balance
+    skew_rows = []
+    for (N, k), g in group:
+        skew_rows.append({
+            "N": N,
+            "k": k,
+            "Column mean": f"{g['col_mean'].mean():.4f}" if "col_mean" in g else "",
+            "Column max": f"{g['col_max'].mean():.2f}" if "col_max" in g else "",
+            "Skew (max/mean)": fmt_mean_std(g["col_skew"]) if "col_skew" in g else "",
+            "Column std": fmt_mean_std(g["col_std"]) if "col_std" in g else "",
+        })
+    skew_df = pd.DataFrame(skew_rows).sort_values(["N", "k"])
+
+    # Table 3: Routing efficiency
+    eff_rows = []
+    for (N, k), g in group:
+        eff_rows.append({
+            "N": N,
+            "k": k,
+            "Fill ratio": fmt_mean_std(g["fill_ratio"]) if "fill_ratio" in g else "",
+            "Coverage S": fmt_mean_std(g["coverage_S"]) if "coverage_S" in g else "",
+            "Coverage T": fmt_mean_std(g["coverage_T"]) if "coverage_T" in g else "",
+            "Active routes": fmt_mean_std(g["active_routes"]) if "active_routes" in g else "",
+        })
+    eff_df = pd.DataFrame(eff_rows).sort_values(["N", "k"])
+
+    # Write Markdown
+    with open(out_path, "w") as f:
+        f.write("# Phase Router – Summary Tables\n\n")
+        f.write("## Table 1 – Routing Performance\n")
+        f.write("Mean ± std over trials. Times are C++ timings.\n\n")
+        f.write(perf_df.to_markdown(index=False))
+        f.write("\n\n")
+        f.write("## Table 2 – Load Balance (Column Statistics)\n")
+        f.write("Skew = max column load divided by mean column load.\n\n")
+        f.write(skew_df.to_markdown(index=False))
+        f.write("\n\n")
+        f.write("## Table 3 – Routing Efficiency\n")
+        f.write("Coverage = fraction of nonzero S or T entries that were routed.\n\n")
+        f.write(eff_df.to_markdown(index=False))
+        f.write("\n\n")
+
+    print(f"✓ Summary tables written to: {out_path}")
+
+
 
 # ============================================================================
 # Main Entry Point
@@ -422,24 +510,31 @@ def main():
     N_values = [256, 512, 1024, 2048, 4096]
     k_values = [8, 16, 64, 256, 512]
     num_trials = 3
-    output_root = "evaluation_results"
+    output_root = RESULTS_ROOT
+
+    scaling_root = RESULTS_ROOT / "scaling"
+    figures_root = RESULTS_ROOT / "figures"
+    repro_root = RESULTS_ROOT / "reproducibility"
+
     
     # Run scaling experiments
     print("\n[1/3] Running scaling experiments...")
     results = run_scaling_experiment(
         N_values=N_values,
         k_values=k_values,
-        output_root=output_root,
+        output_root=str(scaling_root),
         num_trials=num_trials,
         dump_png_max_N=512,
         validate=True
     )
+
     
     # Generate summaries
     print("\n[2/3] Generating summary reports...")
     output_path = Path(output_root)
-    generate_summary_csv(results, output_path / "summary.csv")
-    generate_plots(results, output_path / "figures")
+    generate_summary_csv(results, RESULTS_ROOT / "summary.csv")
+    generate_plots(results, figures_root)
+
     
     # Run reproducibility test
     print("\n[3/3] Running reproducibility test...")
@@ -447,8 +542,9 @@ def main():
         N=1024,
         k=64,
         num_runs=5,
-        output_root=str(output_path / "reproducibility")
+        output_root=str(repro_root)
     )
+
     
     # Final summary
     print("\n" + "="*70)
@@ -464,24 +560,11 @@ def main():
     print("\n")
 
     # -------------------------------
-    # Run make_summary_tables.py at the very end
+    # Run summary tables inline
     # -------------------------------
-    import subprocess
-    make_tables_script = Path(__file__).parent.parent / "scripts" / "make_summary_tables.py"
-
     print("\n[4/4] Generating paper-ready summary tables...")
+    generate_summary_tables(results, RESULTS_ROOT)
 
-    if make_tables_script.exists():
-        try:
-            subprocess.run(
-                ["python", str(make_tables_script)],
-                check=True
-            )
-            print("✓ Summary tables generated successfully.")
-        except subprocess.CalledProcessError as e:
-            print(f"✗ Error running make_summary_tables.py: {e}")
-    else:
-        print(f"✗ Script not found: {make_tables_script}")
 
 
 if __name__ == "__main__":

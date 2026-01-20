@@ -46,9 +46,14 @@ parser.add_argument("--skip-plots", action="store_true", help="Disable plotting"
 args = parser.parse_args()
 SKIP_PLOTS = args.skip_plots
 
-out = Path("test_output")
-out.mkdir(exist_ok=True)
-(out / "plots").mkdir(exist_ok=True)
+RESULTS_ROOT = Path(os.environ.get("PHASE_ROUTER_RESULTS", "results/phase_router_test_matrix")).resolve()
+
+OUT_RESULTS = RESULTS_ROOT / "results"
+OUT_PLOTS = RESULTS_ROOT / "plots"
+
+for folder in [OUT_RESULTS, OUT_PLOTS]:
+    folder.mkdir(parents=True, exist_ok=True)
+
 
 # ============================================================================
 # Utilities
@@ -473,7 +478,7 @@ def test_hash_router_comparison(N, k):
             N, k,
             column_loads_from_routes(phase_routes, N),
             column_loads_from_routes(hash_routes, N),
-            out / "plots",
+            OUT_PLOTS,
             prefix="phase_vs_hash"
         )
 
@@ -594,8 +599,9 @@ if __name__ == "__main__":
     # Build complete header set
     headers = sorted({key for row in csv_rows for key in row.keys()})
 
-    write_csv(csv_rows, headers, out / "phase_router_test_matrix.csv")
-    write_markdown_per_test(all_results, out / "phase_router_test_matrix.md")
+    write_csv(csv_rows, headers, OUT_RESULTS / "phase_router_test_matrix.csv")
+    write_markdown_per_test(all_results, OUT_RESULTS / "phase_router_test_matrix.md")
+
 
 
     log("All tests complete")
