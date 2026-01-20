@@ -36,3 +36,26 @@ results/
 > All JSON, CSV, plots, and PBM→PNG conversions are handled automatically.
 
 ---
+
+### Quick Test (Optional)
+
+If you just want to run a **single small test** without executing the full benchmark suite, you can use `phase_router_test.py`:
+
+```bash
+docker run --rm -v "$(pwd | tr '\\' '/' | sed 's/://g')/results:/app/results" phase_router_tests \
+    python evaluation/phase_router_test.py
+```
+
+**Notes:**
+
+- This will run a **small N=256, k=32 test** and save results in:
+
+  ```
+  results/phase_router_test/quick_test/
+  ```
+
+- JSON metrics and PBM→PNG visualizations are included.
+- Useful for development, CI checks, or verifying that Docker is working correctly.
+- It will **not** run the full scaling experiments, so it’s much faster than the full benchmark.
+
+---
