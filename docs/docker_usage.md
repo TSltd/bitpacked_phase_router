@@ -1,45 +1,35 @@
-### Usage
+## Usage
 
-#### 1. Build Docker Image
+### Build Docker Image
 
 ```bash
 docker build -t phase_router_tests .
 ```
 
-#### 2. Run All Benchmarks (Cross-Platform)
+---
 
-This runs all three tests back-to-back (`phase_router_run.py`, `phase_router_vs_hash.py`, `phase_router_test_matrix.py`) and saves all outputs to the `results/` folder in your project directory.
+### Run Full Benchmarks
 
 ```bash
-docker run --rm -v "$(pwd | tr '\\' '/' | sed 's/://g')/results:/app/results" phase_router_tests
+docker run --rm -v "$(pwd -W 2>/dev/null || pwd)/results:/app/results" phase_router_tests
 ```
 
-- **Linux/macOS:** Uses your system’s available memory automatically.
+> This will run all three tests back-to-back and save all CSV, JSON, and Markdown results to the `results/` folder in your project directory.
+
+**Notes:**
+
+- **Linux/macOS:** The container will use your system’s available memory automatically.
 - **Windows (Docker Desktop):** Make sure Docker has enough memory allocated:
   1. Open Docker Desktop → Settings → Resources → Memory
-  2. Set memory to the maximum your system can provide (e.g., 16–32 GB)
+  2. Set memory to the maximum your system can provide (e.g., 16–32 GB).
 
-#### 3. Output
-
-All results will appear in the `results/` folder:
-
-```
-results/
-├── phase_router_run/           # Scaling experiment outputs (JSON, CSV)
-├── phase_router_vs_hash/       # vs. hash tests
-├── phase_router_test/          # Quick single-phase test outputs
-├── summary.csv                 # Combined CSV summary
-├── figures/                    # Performance and scaling plots
-└── reproducibility/            # Reproducibility test results
-```
-
-> All JSON, CSV, plots, and PBM→PNG conversions are handled automatically.
+- All plots, CSV, JSON, and Markdown summaries will be included in the `results/` folder after completion.
 
 ---
 
 ### Quick Test (Optional)
 
-If you just want to run a **single small test** without executing the full benchmark suite, you can use `phase_router_test.py`:
+Run a **small single test** (N=256, k=32) without executing the full benchmark:
 
 ```bash
 docker run --rm -v "$(pwd | tr '\\' '/' | sed 's/://g')/results:/app/results" phase_router_tests \
@@ -48,14 +38,14 @@ docker run --rm -v "$(pwd | tr '\\' '/' | sed 's/://g')/results:/app/results" ph
 
 **Notes:**
 
-- This will run a **small N=256, k=32 test** and save results in:
+- Results are saved in:
 
   ```
   results/phase_router_test/quick_test/
   ```
 
-- JSON metrics and PBM→PNG visualizations are included.
-- Useful for development, CI checks, or verifying that Docker is working correctly.
-- It will **not** run the full scaling experiments, so it’s much faster than the full benchmark.
+- Includes JSON metrics and PBM→PNG visualizations.
+- Useful for development, CI checks, or verifying Docker setup.
+- Much faster than the full benchmark.
 
 ---
