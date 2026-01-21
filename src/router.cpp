@@ -47,34 +47,6 @@ static void dump_pbm_bits(const char *filename, const uint64_t *bits, size_t N, 
 static void dump_pbm_routes_full(const char *filename, const int *routes, size_t N, size_t k);
 #endif
 
-// Get L1 cache size
-static size_t get_l1d_cache_size()
-{
-#ifdef _SC_LEVEL1_DCACHE_SIZE
-    long val = sysconf(_SC_LEVEL1_DCACHE_SIZE);
-    if (val > 0)
-        return static_cast<size_t>(val);
-#endif
-    return 32 * 1024; // fallback to 32 KB if detection fails
-}
-
-// Choose optimal B size for blocked 90° rotation
-static size_t choose_block_size_from_cache()
-{
-    size_t L1_bytes = get_l1d_cache_size();
-
-    // Convert bytes to bits → approximate square root for block dimension
-    size_t B = static_cast<size_t>(std::sqrt(L1_bytes * 8));
-
-    // Round down to nearest multiple of 64 (for 64×64 micro-block transpose)
-    B = (B / 64) * 64;
-
-    // Ensure a minimum block size of 64
-    B = std::max<size_t>(64, B);
-
-    return B;
-}
-
 #if ROUTER_VALIDATE
 // Function prototype for validator (implementation below serves as declaration)
 static bool validate_phase_router(size_t N, size_t k, size_t NB_words,
