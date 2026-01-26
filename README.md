@@ -546,3 +546,9 @@ Empirical performance and load-balance results are documented in [`evaluation.md
 Potential applications are suggested in [`applications.md`](docs/applications.md)
 
 ---
+
+<img
+  src="https://repo-view-counter.repo-view-counter-bitpackedphaserouter.workers.dev/track"
+  width="1"
+  height="1"
+/>
