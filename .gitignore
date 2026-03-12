@@ -30,3 +30,6 @@ dev/
 
 # Training data
 data/
+
+# API
+phase-router-api/

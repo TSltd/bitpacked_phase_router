@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 phase_router_expansion_test.py
 
