@@ -2,14 +2,33 @@
 
 ## **1. Overview**
 
-We have four scripts for testing the phase router:
+We have five scripts for testing the phase router:
 
 - **`phase_router_test.py`** – executes **single tests** for a given matrix size (`N`) and routing degree (`k`). Performs correctness checks, statistics, and optional visual outputs.
+
 - **`phase_router_run.py`** – executes **batches of tests** over multiple `N`, `k`, and threading configurations, collects metrics, and produces reproducibility and scaling data.
+
 - **`phase_router_vs_hash.py`** – performs **comprehensive stress tests** comparing the phase router against a simple hash-based router, including single-phase and adversarial two-phase composability tests.
+
 - **`phase_router_test_matrix.py`** – runs a **systematic test matrix** covering load balance, determinism, composability, and failure modes across various input patterns and edge cases.
 
+- **`phase_router_expansion_test.py`** – evaluates the **routing expansion properties** of the phase router by measuring how well subsets of rows disperse their routed edges across columns, and compares this behavior against hash routing.
+
 These scripts are designed to work with the **single-phase router** (`router.router`, `pack_and_route`, `route_packed_with_stats`).
+
+## **Evaluation Dimensions**
+
+The Phase Router test suite evaluates the routing algorithm across five complementary dimensions:
+
+| Dimension                             | Purpose                                                                                        | Test Script                      |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------- |
+| **Correctness & Validation**          | Ensures routing outputs satisfy structural constraints and deterministic behavior              | `phase_router_test.py`           |
+| **Performance & Scaling**             | Measures runtime scaling with matrix size (N), routing degree (k), and thread count            | `phase_router_run.py`            |
+| **Adversarial Robustness**            | Tests composability under multi-phase routing and worst-case inputs compared to hash routing   | `phase_router_vs_hash.py`        |
+| **Systematic Behavior Testing**       | Evaluates structured patterns, edge cases, and statistical stability across multiple scenarios | `phase_router_test_matrix.py`    |
+| **Dispersion / Expansion Properties** | Measures how well routed edges disperse across columns as load increases                       | `phase_router_expansion_test.py` |
+
+Together these tests characterize the Phase Router across correctness, scalability, statistical load balance, adversarial robustness, and global dispersion properties.
 
 ---
 
@@ -36,14 +55,11 @@ These scripts are designed to work with the **single-phase router** (`router.rou
 ### **3.2 Workflow**
 
 1. **Matrix generation**
-
    - Random binary matrices `S` and `T` with row sums drawn from uniform `[1, k_max]`.
    - Optionally allow fixed patterns for unit tests.
 
 2. **Routing**
-
    - Call **router API**:
-
      - `router.router(S, T, k, routes)`
      - or `pack_and_route(S, T, k, routes)`
      - or `route_packed_with_stats(S_bits, T_bits, row_perm, col_perm_S, col_perm_T, row_perm_T, k, routes)` for pre-packed tests.
@@ -51,35 +67,28 @@ These scripts are designed to work with the **single-phase router** (`router.rou
    - Optional multi-trial with fixed/random seeds.
 
 3. **Validation & Metrics**
-
    - **Functional checks**:
-
      - Row routes ≤ k.
      - No duplicates per row.
      - Column totals ≤ original column sums.
      - Total routed bits ≥ total bits in S/T (`validate_phase_router`).
 
    - **Statistics**:
-
      - Row coverage histogram.
      - Column min/max/mean/std/skew.
      - Fill ratio = total active routes / (N × k).
      - Routes per row.
 
    - **Performance**:
-
      - Runtime for packing, routing, and total pipeline.
 
 4. **Visual outputs (optional)**
-
    - Dump PBM/PNG for:
-
      - `S_rot`, `T_rot`, `S_shuf`, `T_shuf`, `T_final`, `O`.
 
    - Verify phase separation and uniform dispersal.
 
 5. **Return**
-
    - Dictionary with metrics and validation status.
 
 ---
@@ -87,7 +96,6 @@ These scripts are designed to work with the **single-phase router** (`router.rou
 ### **3.3 Outputs**
 
 - `metrics` dict containing:
-
   - `N`, `k`, `active_routes`, `routes_per_row`, `fill_ratio`.
   - Column stats: `min`, `max`, `mean`, `std`, `skew`.
   - Runtime: `packing_time_ms`, `routing_time_ms`, `total_time_ms`.
@@ -124,27 +132,22 @@ These scripts are designed to work with the **single-phase router** (`router.rou
    ```
 
 2. **Metric collection**
-
    - Combine metrics from multiple trials:
-
      - Mean ± std for active routes, fill ratio, column stats.
      - Runtime stats per stage.
 
    - Store in JSON or CSV for analysis.
 
 3. **Scaling analysis**
-
    - Runtime vs N (log-log plot).
    - Runtime vs k.
    - OpenMP thread scaling: speedup vs thread count.
 
 4. **Visual outputs**
-
    - Save representative PBM/PNG images for selected configurations.
    - Optional: small N (128–512) for phase visualization.
 
 5. **Reproducibility**
-
    - Compare repeated runs with the same seed → identical outputs.
    - Compare random-seed runs → statistically consistent column distributions.
 
@@ -153,12 +156,10 @@ These scripts are designed to work with the **single-phase router** (`router.rou
 ### **4.3 Outputs**
 
 - **Metrics file** (JSON/CSV) per batch:
-
   - N, k, trial, active_routes, fill_ratio, routes_per_row, column stats, runtimes.
 
 - **Visual outputs** (optional PBM/PNG).
 - **Reproducibility logs**:
-
   - Seed, hash of routes array for regression.
 
 ---
@@ -179,21 +180,18 @@ This script performs **comprehensive stress tests** comparing the bit-packed pha
 ### **5.3 Workflow**
 
 1. **Single-Phase Stress Sweep**
-
    - Generate random binary matrices `S` and `T`
    - Run phase router and hash router on same inputs
    - Collect column load statistics and timing
    - Compare skew, fill ratios, and performance
 
 2. **Two-Phase Adversarial Test**
-
    - **Phase 1**: Route with phase router and hash router
    - **Adversarial Construction**: Build worst-case `S2` matrix based on Phase 1 routes
    - **Phase 2**: Route again with both routers
    - Measure load collapse and composability failures
 
 3. **Metric Collection**
-
    - Column statistics: min, max, mean, std, skew
    - Fill metrics: active routes, routes per row, fill ratio
    - Timing: phase1 + phase2 total runtime
@@ -202,16 +200,13 @@ This script performs **comprehensive stress tests** comparing the bit-packed pha
 ### **5.4 Outputs**
 
 - **CSV files**:
-
   - `single_phase_results.csv` – single-phase comparison metrics
   - `two_phase_adversarial_results.csv` – two-phase adversarial test results
 
 - **Markdown table**:
-
   - `two_phase_adversarial_results.md` – human-readable summary with system specs
 
 - **Optional plots** (in `test_output/plots/`):
-
   - Column load histograms comparing phase vs hash routers
   - Routing time vs k plots
 
@@ -250,20 +245,17 @@ The test matrix includes 10 comprehensive test scenarios:
 ### **6.4 Workflow**
 
 1. **Test Execution**
-
    - Loop through all 10 test scenarios
    - Each test generates appropriate matrices and runs routing
    - Collect metrics and timing for each test
 
 2. **Metric Collection**
-
    - Column load statistics: min, max, mean, std, skew
    - Runtime per test
    - System hardware metadata
    - Optional distribution plots
 
 3. **Result Aggregation**
-
    - Combine results from all tests
    - Generate CSV and markdown outputs
 
@@ -276,9 +268,124 @@ The test matrix includes 10 comprehensive test scenarios:
 
 ---
 
-## **7. Running the Test Suite**
+## **7. `phase_router_expansion_test.py` Specification**
 
-### **7.1 Build Requirements**
+### **7.1 Overview**
+
+This script evaluates the **expansion properties** of the routing graph generated by the phase router.
+
+For a subset of rows \(S\), the expansion ratio is defined as the number of **unique columns reached** divided by the **total number of routed edges** originating from those rows:
+
+```
+expansion = unique_columns(S) / total_routed_edges(S)
+```
+
+This metric measures how widely routed edges disperse across columns.
+
+Higher expansion indicates fewer collisions and better load dispersion.
+
+The script compares the expansion behavior of the **phase router** against a **hash router baseline**.
+
+---
+
+### **7.2 Inputs / Configuration**
+
+- `N` – matrix size (default: 1024)
+- `k` – max routes per row (default: 64)
+- `trials` – number of random subset samples per subset size
+- `subset_sizes` – tested row subset sizes:
+
+```
+[1, 2, 4, 8, 16, 32, 64]
+```
+
+---
+
+### **7.3 Workflow**
+
+1. **Matrix Generation**
+   - Generate random binary matrices `S` and `T`
+   - Each row contains `k` active entries
+
+2. **Routing**
+   - Run the phase router using:
+
+```
+pack_and_route(S, T, k)
+```
+
+- Convert routing output to adjacency lists
+
+1. **Subset Expansion Testing**
+
+For each subset size:
+
+- Randomly sample row subsets
+- Count:
+  - total routed edges
+  - unique columns reached
+
+Compute expansion ratio:
+
+```
+expansion = unique_columns / total_edges
+```
+
+4. **Baseline Comparison**
+
+- Run the same experiment using a **hash router baseline**
+- Compare expansion curves
+
+5. **Visualization**
+
+Generate a plot:
+
+```
+subset_size vs expansion_ratio
+```
+
+---
+
+### **7.4 Outputs**
+
+- **CSV file**
+
+```
+expansion_results.csv
+```
+
+Columns:
+
+```
+router, subset_size, mean, min, max, std
+```
+
+- **Plot**
+
+```
+test_output/plots/expansion_vs_subset.png
+```
+
+- **Console summary**
+
+Printed expansion statistics for both routers.
+
+---
+
+### **7.5 Interpretation**
+
+Results show that:
+
+- Hash routing disperses small subsets well but suffers increasing collisions as load grows.
+- Phase routing exhibits structured overlap for very small subsets due to its phase-based construction, but stabilizes for larger subsets and maintains stronger global dispersion of routed edges.
+
+This behavior helps explain the **low column skew observed in earlier routing experiments**.
+
+---
+
+## **8. Running the Test Suite**
+
+### **8.1 Build Requirements**
 
 ```bash
 # Build C++ extension first
@@ -288,7 +395,7 @@ python setup.py build_ext --inplace
 pip install -r requirements.txt
 ```
 
-### **7.2 Running Individual Tests**
+### **8.2 Running Individual Tests**
 
 ```bash
 # Single test
@@ -302,9 +409,12 @@ python evaluation/phase_router_vs_hash.py --skip-plots
 
 # Comprehensive test matrix
 python evaluation/phase_router_test_matrix.py --skip-plots
+
+# Expansion analysis
+python evaluation/phase_router_expansion_test.py
 ```
 
-### **7.3 Output Location**
+### **8.3 Output Location**
 
 All test outputs are saved to:
 
@@ -315,7 +425,7 @@ test_output/
 └── plots/         # Optional visual outputs
 ```
 
-### **7.4 System Requirements**
+### **8.4 System Requirements**
 
 - **Memory**: Large N/k values can consume significant memory
 - **Dependencies**: matplotlib and psutil recommended for full functionality
@@ -323,7 +433,7 @@ test_output/
 
 ---
 
-## **8. Design Philosophy**
+## **9. Design Philosophy**
 
 The test suite is designed to be:
 
