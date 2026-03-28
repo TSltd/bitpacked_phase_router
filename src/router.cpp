@@ -179,63 +179,6 @@ static void permute_columns_bits(const uint64_t *src,
     }
 }
 
-static inline void transpose64(uint64_t x[64])
-{
-    uint64_t t;
-
-    // Stage 1
-    for (int i = 0; i < 32; i++)
-    {
-        t = (x[i] ^ (x[i + 32] >> 32)) & 0x00000000FFFFFFFFULL;
-        x[i] ^= t;
-        x[i + 32] ^= t << 32;
-    }
-
-    // Stage 2
-    for (int i = 0; i < 64; i += 32)
-        for (int j = 0; j < 16; j++)
-        {
-            t = (x[i + j] ^ (x[i + j + 16] >> 16)) & 0x0000FFFF0000FFFFULL;
-            x[i + j] ^= t;
-            x[i + j + 16] ^= t << 16;
-        }
-
-    // Stage 3
-    for (int i = 0; i < 64; i += 16)
-        for (int j = 0; j < 8; j++)
-        {
-            t = (x[i + j] ^ (x[i + j + 8] >> 8)) & 0x00FF00FF00FF00FFULL;
-            x[i + j] ^= t;
-            x[i + j + 8] ^= t << 8;
-        }
-
-    // Stage 4
-    for (int i = 0; i < 64; i += 8)
-        for (int j = 0; j < 4; j++)
-        {
-            t = (x[i + j] ^ (x[i + j + 4] >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
-            x[i + j] ^= t;
-            x[i + j + 4] ^= t << 4;
-        }
-
-    // Stage 5
-    for (int i = 0; i < 64; i += 4)
-        for (int j = 0; j < 2; j++)
-        {
-            t = (x[i + j] ^ (x[i + j + 2] >> 2)) & 0x3333333333333333ULL;
-            x[i + j] ^= t;
-            x[i + j + 2] ^= t << 2;
-        }
-
-    // Stage 6
-    for (int i = 0; i < 64; i += 2)
-    {
-        t = (x[i] ^ (x[i + 1] >> 1)) & 0x5555555555555555ULL;
-        x[i] ^= t;
-        x[i + 1] ^= t << 1;
-    }
-}
-
 // ---
 // 90 degree tranpose
 // ---
