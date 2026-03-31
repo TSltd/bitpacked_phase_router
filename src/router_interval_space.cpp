@@ -12,11 +12,14 @@
 #include <stdexcept>
 #include <string>
 #include <omp.h>
+#include <iostream>
 
 namespace py = pybind11;
 
 #define WORD_BITS 64
 #define NB(N) (((N) + WORD_BITS - 1) / WORD_BITS)
+
+static constexpr size_t N_SMALL_CUTOFF = 256;
 
 // ---------------------------------------------------------
 // Utilities
@@ -482,6 +485,19 @@ py::array_t<uint64_t> pack_bits(py::array_t<uint8_t> M_np)
     return bits_np;
 }
 
+// Compute density
+
+static double estimate_density(const uint64_t *bits, size_t N, size_t NB_words)
+{
+    size_t sample_rows = std::min<size_t>(N, 64);
+    size_t bits_count = 0;
+
+    for (size_t i = 0; i < sample_rows * NB_words; i++)
+        bits_count += __builtin_popcountll(bits[i]);
+
+    return double(bits_count) / double(sample_rows * N);
+}
+
 // ------------------------------------------------------------
 // ORIGINAL KERNEL (ported for dense/moderate dispatch)
 // ------------------------------------------------------------
@@ -660,30 +676,50 @@ static const char *phase_router_bitpacked(
 {
     require_power_of_2(N);
 
-    // ---- Density estimation (both S and T) ----
-    /*     size_t total_bits_S = 0, total_bits_T = 0;
-        for (size_t i = 0; i < N * NB_words; i++)
-        {
-            total_bits_S += __builtin_popcountll(S_bits[i]);
-            total_bits_T += __builtin_popcountll(T_bits[i]);
-        }
+    // ---- estimate density ----
+    double density = estimate_density(S_bits, N, NB_words);
 
-        double density = double(total_bits_S + total_bits_T) / double(2 * N * N);
-
-        // ---- Hybrid dispatch: small N always original, k + density for mid-range ----
-        bool use_original = (N <= 256) ||
-                            (k >= 64 && N <= 1024) ||
-                            (density > 0.015 && N <= 1024);
-     */
+    // ---- k/N ratio ----
     double kn = double(k) / double(N);
 
-    bool use_original =
-        (N <= 256) ||
-        (kn > 0.08 && kn < 0.18 && N <= 1024);
+    bool use_original;
 
+#ifdef FORCE_ORIGINAL
+
+    use_original = true;
+
+#elif defined(FORCE_INTERVAL)
+
+    use_original = false;
+
+#else
+
+    if (N < N_SMALL_CUTOFF)
+    {
+        use_original = true;
+    }
+    else if (density > 0.05)
+    {
+        use_original = true; // dense → original
+    }
+    else
+    {
+        use_original = (kn > 0.25);
+    }
+
+#endif
+
+    // ---- debug print ----
+    std::cerr << "[dispatch] N=" << N
+              << " k=" << k
+              << " density=" << density
+              << " kn=" << kn
+              << " -> " << (use_original ? "original" : "interval")
+              << "\n";
+
+    // ---- dispatch ----
     if (use_original)
     {
-        // Dense/moderate regime → original kernel (sequential dense ops)
         std::vector<uint64_t> col_perm_S(N), col_perm_T(N);
         for (size_t i = 0; i < N; i++)
         {
@@ -701,11 +737,11 @@ static const char *phase_router_bitpacked(
             S_bits, T_bits,
             col_perm_S.data(), col_perm_T.data(),
             routes, seed_base);
+
         return "original";
     }
     else
     {
-        // Sparse/large regime → interval kernel (fused transpose, no rotate)
         auto S_routed = route_dispatch(S_bits, N, NB_words);
         auto T_routed = route_dispatch(T_bits, N, NB_words);
 
@@ -714,13 +750,23 @@ static const char *phase_router_bitpacked(
             T_routed.data(),
             N, NB_words, k,
             routes, seed_base);
+
         return "interval";
     }
 }
 
 // ------------------------------------------------------------
-// Python API (unchanged)
+// Python API
 // ------------------------------------------------------------
+
+py::dict get_router_config_py()
+{
+    py::dict d;
+    d["N_small_cutoff"] = N_SMALL_CUTOFF;
+    d["description"] = "fixed dispatch rule";
+    return d;
+}
+
 py::dict pack_and_route(py::array_t<uint8_t> S_np,
                         py::array_t<uint8_t> T_np,
                         size_t k,
@@ -743,6 +789,9 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
     std::memcpy(S_bits.data(), S_bits_np.data(), N * NB_words * sizeof(uint64_t));
     std::memcpy(T_bits.data(), T_bits_np.data(), N * NB_words * sizeof(uint64_t));
+
+    // ---- compute real density (used for training + reporting) ----
+    double density = estimate_density(S_bits.data(), N, NB_words);
 
     std::vector<uint64_t> row_perm(N), row_perm_T(N);
     for (size_t i = 0; i < N; i++)
@@ -783,6 +832,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
     d["total_time_ms"] = t1_route - t0_pack;
     d["routes_per_row"] = double(active) / double(N);
     d["kernel"] = std::string(kernel_used);
+    d["density"] = density;
 
     return d;
 }
@@ -855,7 +905,7 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
 // ------------------------------------------------------------
 PYBIND11_MODULE(router, m)
 {
-    m.doc() = "Interval-space phase router (structure-preserving, drop-in replacement)";
+    m.doc() = "Interval-space phase router";
 
     m.def("left_align_rows", &left_align_rows);
     m.def("pack_bits", &pack_bits);
@@ -878,4 +928,6 @@ PYBIND11_MODULE(router, m)
           py::arg("validate") = false,
           py::arg("debug_prefix") = "",
           py::arg("seed") = 0);
+
+    m.def("get_router_config", &get_router_config_py);
 }

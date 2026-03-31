@@ -129,6 +129,7 @@ def bench_one(N: int, k: int, seed: int) -> Dict:
         "total_time_ms":   float(stats.get("total_time_ms", 0)),
         **col_stats,
         "kernel": stats.get("kernel", "unknown"),
+        "density": float(stats.get("density", 0.0)),
     }
 
 # ---------------------------------------------------------------------------
@@ -143,6 +144,11 @@ def run_benchmark(tag: str):
     print(f"  BENCHMARK: {tag}")
     print(f"  Configs : {len(TEST_CONFIGS)}  |  Trials: {NUM_TRIALS}  |  Warmup: {WARMUP_RUNS}")
     print(f"{'=' * 70}\n")
+
+    cfg = router.get_router_config()
+    print(f"Config: N_small={cfg['N_small_cutoff']}, "
+        f"a={cfg['a']:.3f}, b={cfg['b']:.3f}, "
+        f"c={cfg['c']:.3f}, d={cfg['d']:.3f}")
 
     all_results: List[Dict] = []
 
@@ -207,10 +213,10 @@ def run_benchmark(tag: str):
 # Comparison
 # ---------------------------------------------------------------------------
 
-def run_comparison():
-    orig_path     = RESULTS_DIR / "bench_original.json"
-    interval_path = RESULTS_DIR / "bench_interval.json"
-    report_path   = RESULTS_DIR / "comparison_report.txt"
+def run_comparison(tag_a="original", tag_b="interval"):
+    orig_path     = RESULTS_DIR / f"bench_{tag_a}.json"
+    interval_path = RESULTS_DIR / f"bench_{tag_b}.json"
+    report_path   = RESULTS_DIR / f"comparison_{tag_a}_vs_{tag_b}.txt"
 
     if not orig_path.exists():
         print(f"ERROR: {orig_path} not found.  Run with --tag original first.")
@@ -235,7 +241,7 @@ def run_comparison():
         print(msg)
 
     log("=" * 90)
-    log("  COMPARISON:  original  vs  interval-space")
+    log(f"  COMPARISON:  {tag_a}  vs  {tag_b}")    
     log("=" * 90)
     log()
     log(f"{'N':>6}  {'k':>5}  "
@@ -299,12 +305,12 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--tag", type=str,
                        help="Run benchmark and tag results (e.g. 'original' or 'interval')")
-    group.add_argument("--compare", action="store_true",
-                       help="Compare bench_original.json vs bench_interval.json")
+    group.add_argument("--compare", nargs=2, metavar=("A", "B"),
+                   help="Compare two tags, e.g. --compare original interval")
     args = parser.parse_args()
 
     if args.compare:
-        run_comparison()
+        run_comparison(args.compare[0], args.compare[1])
     else:
         run_benchmark(args.tag)
 
