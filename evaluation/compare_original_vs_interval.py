@@ -110,6 +110,9 @@ def bench_one(N: int, k: int, seed: int) -> Dict:
     # Use a deterministic router seed so results are comparable
     stats = router.pack_and_route(S, T, k, routes,
                                   dump=False, validate=False, seed=seed)
+    
+    # optional debug
+    # print(f"[kernel={stats['kernel']}]")
 
     active = int(np.sum(routes >= 0))
     col_stats = compute_column_statistics(routes, N)
@@ -125,6 +128,7 @@ def bench_one(N: int, k: int, seed: int) -> Dict:
         "packing_time_ms": float(stats.get("packing_time_ms", 0)),
         "total_time_ms":   float(stats.get("total_time_ms", 0)),
         **col_stats,
+        "kernel": stats.get("kernel", "unknown"),
     }
 
 # ---------------------------------------------------------------------------
@@ -158,10 +162,14 @@ def run_benchmark(tag: str):
             trial_results.append(r)
 
         # Aggregate
-        routing_times = [r["routing_time_ms"] for r in trial_results]
-        total_times   = [r["total_time_ms"]   for r in trial_results]
+        routing_times = [r["routing_time_ms"]  for r in trial_results]
+        total_times   = [r["total_time_ms"]    for r in trial_results]
         fill_ratios   = [r["fill_ratio"]       for r in trial_results]
         col_skews     = [r["col_skew"]         for r in trial_results]
+        kernels       = [r["kernel"]           for r in trial_results]
+
+        if len(set(kernels)) != 1:
+            print("WARNING: mixed kernel usage!", set(kernels))
 
         agg = {
             "N": N,
@@ -177,6 +185,7 @@ def run_benchmark(tag: str):
             "fill_ratio_mean":      float(np.mean(fill_ratios)),
             "col_skew_mean":        float(np.mean(col_skews)),
             "col_skew_std":         float(np.std(col_skews)),
+            "kernel": kernels[0] if len(set(kernels)) == 1 else "mixed",
             "trials": trial_results,
         }
 
@@ -232,7 +241,8 @@ def run_comparison():
     log(f"{'N':>6}  {'k':>5}  "
         f"{'orig (ms)':>12}  {'intv (ms)':>12}  {'speedup':>8}  "
         f"{'orig skew':>10}  {'intv skew':>10}  "
-        f"{'orig fill%':>10}  {'intv fill%':>10}")
+        f"{'orig fill%':>10}  {'intv fill%':>10}  "
+        f"{'orig_k':>8}  {'intv_k':>8}")
     log("-" * 90)
 
     speedups = []
@@ -251,10 +261,18 @@ def run_comparison():
         sp   = o_rt / i_rt if i_rt > 0 else float("inf")
         speedups.append(sp)
 
+        # heuristic warning
+        if i.get("kernel") == "original" and sp > 2.0:
+            print("⚠️ interval should have been used here:", key)
+
+        if i.get("kernel") == "interval" and sp < 0.5:
+            print("⚠️ original should have been used here:", key)
+
         log(f"{key[0]:>6}  {key[1]:>5}  "
             f"{o_rt:>10.2f}ms  {i_rt:>10.2f}ms  {sp:>7.2f}x  "
             f"{o['col_skew_mean']:>10.2f}  {i['col_skew_mean']:>10.2f}  "
-            f"{o['fill_ratio_mean']*100:>9.1f}%  {i['fill_ratio_mean']*100:>9.1f}%")
+            f"{o['fill_ratio_mean']*100:>9.1f}%  {i['fill_ratio_mean']*100:>9.1f}% "
+            f"{o.get('kernel', 'n/a'):>8}  {i.get('kernel', 'n/a'):>8}")
 
     log("-" * 90)
     if speedups:

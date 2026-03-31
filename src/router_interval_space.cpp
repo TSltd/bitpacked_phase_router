@@ -396,9 +396,9 @@ static void and_extract_dispatch(
 // Helpers
 // ------------------------------------------------------------
 
-// Rotate T 90° clockwise (retained as utility — not called from hot path)
+// Rotate T 90° clockwise (used by original kernel path)
 
-__attribute__((unused)) static void rotate90_clockwise(
+static void rotate90_clockwise(
     const uint64_t *T_prepared,
     uint64_t *T_final,
     size_t N,
@@ -483,10 +483,170 @@ py::array_t<uint64_t> pack_bits(py::array_t<uint8_t> M_np)
 }
 
 // ------------------------------------------------------------
-// MAIN KERNEL - Core router (INDEX-SPACE VERSION)
+// ORIGINAL KERNEL (ported for dense/moderate dispatch)
 // ------------------------------------------------------------
 
-static void phase_router_bitpacked(
+// Per-row bitwise rotation (multi-word barrel shift with wrap)
+static void rotate_bits_full(const uint64_t *src, size_t N, size_t NB_words,
+                             size_t offset, uint64_t *dst)
+{
+    if (N == 0)
+        return;
+
+    const uint64_t mask = (N % WORD_BITS == 0) ? ~0ULL : (1ULL << (N % WORD_BITS)) - 1;
+
+    if (offset == 0)
+    {
+        dst[0] = src[0] & mask;
+        for (size_t w = 1; w < NB_words; w++)
+            dst[w] = src[w];
+        return;
+    }
+
+    if (NB_words == 1)
+    {
+        dst[0] = ((src[0] << offset) | (src[0] >> (WORD_BITS - offset))) & mask;
+        return;
+    }
+
+    size_t word_shift = offset / WORD_BITS;
+    size_t bit_shift = offset % WORD_BITS;
+
+    for (size_t w = 0; w < NB_words; w++)
+    {
+        size_t src1 = (w + NB_words - word_shift) % NB_words;
+        size_t src2 = (w + NB_words - word_shift - 1 + NB_words) % NB_words;
+
+        uint64_t hi = (bit_shift == 0) ? 0 : (src[src2] >> (WORD_BITS - bit_shift));
+        uint64_t lo = src[src1] << bit_shift;
+
+        dst[w] = lo | hi;
+
+        if (w == NB_words - 1)
+            dst[w] &= mask;
+    }
+}
+
+// Per-row column permutation via bit scatter
+static void permute_columns_bits(const uint64_t *src,
+                                 uint64_t *dst,
+                                 const uint64_t *col_perm,
+                                 size_t N,
+                                 size_t NB_words)
+{
+    std::memset(dst, 0, NB_words * sizeof(uint64_t));
+
+    for (size_t j = 0; j < N; j++)
+    {
+        size_t src_j = col_perm[j];
+        size_t src_w = src_j / WORD_BITS;
+        size_t src_b = src_j % WORD_BITS;
+
+        if (src[src_w] & (1ULL << src_b))
+        {
+            size_t dst_w = j / WORD_BITS;
+            size_t dst_b = j % WORD_BITS;
+            dst[dst_w] |= 1ULL << dst_b;
+        }
+    }
+}
+
+// Original kernel: cumulative rotate → col shuffle → rotate90 → AND extract
+static void phase_router_original(
+    size_t N, size_t k, size_t NB_words,
+    const uint64_t *S_bits,
+    const uint64_t *T_bits,
+    const uint64_t *col_perm_S,
+    const uint64_t *col_perm_T,
+    int *routes,
+    uint64_t seed_base)
+{
+    // Step 1: Cumulative row offsets
+    std::vector<size_t> row_offsets_S(N, 0);
+    std::vector<size_t> row_offsets_T(N, 0);
+
+    for (size_t i = 1; i < N; i++)
+    {
+        size_t rs = 0, rt = 0;
+        for (size_t w = 0; w < NB_words; w++)
+        {
+            rs += __builtin_popcountll(S_bits[(i - 1) * NB_words + w]);
+            rt += __builtin_popcountll(T_bits[(i - 1) * NB_words + w]);
+        }
+        row_offsets_S[i] = (row_offsets_S[i - 1] + rs) % N;
+        row_offsets_T[i] = (row_offsets_T[i - 1] + rt) % N;
+    }
+
+    // Step 2: Rotate rows
+    std::vector<uint64_t> S_rot(N * NB_words);
+    std::vector<uint64_t> T_rot(N * NB_words);
+
+#pragma omp parallel for schedule(static) if (N >= 512)
+    for (size_t i = 0; i < N; i++)
+    {
+        rotate_bits_full(&S_bits[i * NB_words], N, NB_words,
+                         row_offsets_S[i], &S_rot[i * NB_words]);
+        rotate_bits_full(&T_bits[i * NB_words], N, NB_words,
+                         row_offsets_T[i], &T_rot[i * NB_words]);
+    }
+
+    // Step 3: Column shuffle
+    std::vector<uint64_t> S_final(N * NB_words);
+    std::vector<uint64_t> T_shuf(N * NB_words);
+
+#pragma omp parallel for schedule(static) if (N >= 512)
+    for (size_t i = 0; i < N; i++)
+    {
+        permute_columns_bits(&S_rot[i * NB_words],
+                             &S_final[i * NB_words],
+                             col_perm_S, N, NB_words);
+        permute_columns_bits(&T_rot[i * NB_words],
+                             &T_shuf[i * NB_words],
+                             col_perm_T, N, NB_words);
+    }
+
+    // Step 4: Rotate T 90° clockwise
+    std::vector<uint64_t> T_final(N * NB_words, 0);
+    rotate90_clockwise(T_shuf.data(), T_final.data(), N, NB_words);
+
+    // Step 5: AND + extract routes (with pre-reserved candidates)
+#pragma omp parallel for schedule(static) if (N >= 512)
+    for (size_t i = 0; i < N; i++)
+    {
+        const uint64_t *Srow = &S_final[i * NB_words];
+        const uint64_t *Trow = &T_final[i * NB_words];
+
+        std::vector<size_t> candidates;
+        candidates.reserve(64);
+
+        for (size_t w = 0; w < NB_words; w++)
+        {
+            uint64_t m = Srow[w] & Trow[w];
+            while (m)
+            {
+                size_t b = __builtin_ctzll(m);
+                candidates.push_back(w * WORD_BITS + b);
+                m &= m - 1;
+            }
+        }
+
+        // Deterministic shuffle
+        std::mt19937_64 rng(seed_base + i);
+        std::shuffle(candidates.begin(), candidates.end(), rng);
+
+        size_t cnt = 0;
+        for (; cnt < k && cnt < candidates.size(); cnt++)
+            routes[i * k + cnt] = candidates[cnt];
+        for (; cnt < k; cnt++)
+            routes[i * k + cnt] = -1;
+    }
+}
+
+// ------------------------------------------------------------
+// MAIN KERNEL - Hybrid dispatch (density-aware)
+// ------------------------------------------------------------
+
+static const char *phase_router_bitpacked(
     size_t N, size_t k, size_t NB_words,
     const uint64_t *S_bits,
     const uint64_t *T_bits,
@@ -500,20 +660,62 @@ static void phase_router_bitpacked(
 {
     require_power_of_2(N);
 
-    auto S_routed = route_dispatch(S_bits, N, NB_words);
+    // ---- Density estimation (both S and T) ----
+    /*     size_t total_bits_S = 0, total_bits_T = 0;
+        for (size_t i = 0; i < N * NB_words; i++)
+        {
+            total_bits_S += __builtin_popcountll(S_bits[i]);
+            total_bits_T += __builtin_popcountll(T_bits[i]);
+        }
 
-    auto T_routed = route_dispatch(T_bits, N, NB_words);
+        double density = double(total_bits_S + total_bits_T) / double(2 * N * N);
 
-    // Fused: and_extract now does on-the-fly transpose access into T_routed
-    // — no rotate90_clockwise needed
-    and_extract_dispatch(
-        S_routed.data(),
-        T_routed.data(),
-        N,
-        NB_words,
-        k,
-        routes,
-        seed_base);
+        // ---- Hybrid dispatch: small N always original, k + density for mid-range ----
+        bool use_original = (N <= 256) ||
+                            (k >= 64 && N <= 1024) ||
+                            (density > 0.015 && N <= 1024);
+     */
+    double kn = double(k) / double(N);
+
+    bool use_original =
+        (N <= 256) ||
+        (kn > 0.08 && kn < 0.18 && N <= 1024);
+
+    if (use_original)
+    {
+        // Dense/moderate regime → original kernel (sequential dense ops)
+        std::vector<uint64_t> col_perm_S(N), col_perm_T(N);
+        for (size_t i = 0; i < N; i++)
+        {
+            col_perm_S[i] = i;
+            col_perm_T[i] = i;
+        }
+
+        std::mt19937_64 rng_S(seed_base ^ 0x9E3779B97F4A7C15ULL);
+        std::mt19937_64 rng_T(seed_base ^ 0xD1B54A32D192ED03ULL);
+        std::shuffle(col_perm_S.begin(), col_perm_S.end(), rng_S);
+        std::shuffle(col_perm_T.begin(), col_perm_T.end(), rng_T);
+
+        phase_router_original(
+            N, k, NB_words,
+            S_bits, T_bits,
+            col_perm_S.data(), col_perm_T.data(),
+            routes, seed_base);
+        return "original";
+    }
+    else
+    {
+        // Sparse/large regime → interval kernel (fused transpose, no rotate)
+        auto S_routed = route_dispatch(S_bits, N, NB_words);
+        auto T_routed = route_dispatch(T_bits, N, NB_words);
+
+        and_extract_dispatch(
+            S_routed.data(),
+            T_routed.data(),
+            N, NB_words, k,
+            routes, seed_base);
+        return "interval";
+    }
 }
 
 // ------------------------------------------------------------
@@ -555,7 +757,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
     double t0_route = now_ms();
 
-    phase_router_bitpacked(
+    const char *kernel_used = phase_router_bitpacked(
         N, k, NB_words,
         S_bits.data(),
         T_bits.data(),
@@ -580,6 +782,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
     d["routing_time_ms"] = t1_route - t0_route;
     d["total_time_ms"] = t1_route - t0_pack;
     d["routes_per_row"] = double(active) / double(N);
+    d["kernel"] = std::string(kernel_used);
 
     return d;
 }
