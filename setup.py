@@ -4,7 +4,7 @@ import numpy
 
 ext = Extension(
     "router",
-    sources=["src/router.cpp"],
+    sources=["src/router_interval_space.cpp"],
     include_dirs=[
         pybind11.get_include(),
         numpy.get_include()
