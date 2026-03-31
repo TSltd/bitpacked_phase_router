@@ -40,18 +40,33 @@ RESULTS_DIR = Path("results/compare_original_vs_interval")
 TEST_CONFIGS = [
     (256,   8),
     (256,  64),
+   
     (512,  16),
     (512,  64),
+   
     (1024, 16),
     (1024, 64),
     (1024, 256),
+   
     (2048, 64),
     (2048, 256),
+   
     (4096, 64),
     (4096, 256),
+
+    (8192,   64),
+    (8192,   256),
+    (8192,   1024),
+
+    (16384,  64),
+    (16384,  256),
+    (16384,  1024),
+
+    (32768,  64),
+    (32768,  256),
 ]
 
-NUM_TRIALS  = 5        # trials per (N, k) — we report mean / std
+NUM_TRIALS  = 3        # trials per (N, k) — we report mean / std
 WARMUP_RUNS = 1        # discarded warmup per config
 FIXED_SEED_S = 42
 FIXED_SEED_T = 123
@@ -146,9 +161,7 @@ def run_benchmark(tag: str):
     print(f"{'=' * 70}\n")
 
     cfg = router.get_router_config()
-    print(f"Config: N_small={cfg['N_small_cutoff']}, "
-        f"a={cfg['a']:.3f}, b={cfg['b']:.3f}, "
-        f"c={cfg['c']:.3f}, d={cfg['d']:.3f}")
+    print(f"Config: {cfg}")
 
     all_results: List[Dict] = []
 

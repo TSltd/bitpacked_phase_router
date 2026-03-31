@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e
 
+# Usage: ./scripts/run_full_pipeline.sh
+
 RESULTS_DIR="results/compare_original_vs_interval"
 
 clean() {
@@ -38,38 +40,21 @@ echo "========================================"
 python evaluation/compare_original_vs_interval.py --compare original interval
 
 echo "========================================"
-echo " PHASE 2: FIT WEIGHTS"
-echo "========================================"
-
-python evaluation/fit_dispatch_weights.py
-
-echo "========================================"
-echo " PHASE 3: EVALUATE DISPATCH"
+echo " PHASE 2: DEFAULT DISPATCH (FIXED RULE)"
 echo "========================================"
 
 # -------------------------
-# SIMPLE RULE
+# DEFAULT DISPATCH
 # -------------------------
 clean
-export CXXFLAGS="-DUSE_LEARNED_MODEL=0"
 python setup.py build_ext --inplace
-python evaluation/compare_original_vs_interval.py --tag simple_rule
-
-# -------------------------
-# LEARNED MODEL
-# -------------------------
-clean
-export CXXFLAGS="-DUSE_LEARNED_MODEL=1"
-python setup.py build_ext --inplace
-python evaluation/compare_original_vs_interval.py --tag learned_model
-
-unset CXXFLAGS
+python evaluation/compare_original_vs_interval.py --tag dispatch
 
 echo "========================================"
-echo " DISPATCH COMPARISON"
+echo " DISPATCH VS GROUND TRUTH"
 echo "========================================"
 
-python evaluation/compare_original_vs_interval.py --compare simple_rule learned_model
+python evaluation/compare_original_vs_interval.py --compare original dispatch
 
 echo "========================================"
 echo " DONE"

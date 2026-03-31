@@ -684,27 +684,32 @@ static const char *phase_router_bitpacked(
 
     bool use_original;
 
-#ifdef FORCE_ORIGINAL
+    const char *reason = "";
 
+#ifdef FORCE_ORIGINAL
     use_original = true;
+    reason = "FORCE_ORIGINAL";
 
 #elif defined(FORCE_INTERVAL)
-
     use_original = false;
+    reason = "FORCE_INTERVAL";
 
 #else
 
-    if (N < N_SMALL_CUTOFF)
+    if (N <= N_SMALL_CUTOFF)
     {
         use_original = true;
+        reason = "N_small";
     }
-    else if (density > 0.05)
+    else if (kn > 0.25)
     {
-        use_original = true; // dense → original
+        use_original = true;
+        reason = "high_kn";
     }
     else
     {
-        use_original = (kn > 0.25);
+        use_original = false;
+        reason = "interval_default";
     }
 
 #endif
@@ -714,7 +719,9 @@ static const char *phase_router_bitpacked(
               << " k=" << k
               << " density=" << density
               << " kn=" << kn
+              << " reason=" << reason
               << " -> " << (use_original ? "original" : "interval")
+              << " nnz_per_row=" << (density * N)
               << "\n";
 
     // ---- dispatch ----
@@ -833,6 +840,7 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
     d["routes_per_row"] = double(active) / double(N);
     d["kernel"] = std::string(kernel_used);
     d["density"] = density;
+    d["fill_ratio"] = double(active) / double(N * k);
 
     return d;
 }
