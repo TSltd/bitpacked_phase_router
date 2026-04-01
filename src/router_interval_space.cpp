@@ -14,6 +14,8 @@
 #include <omp.h>
 #include <iostream>
 
+#define CALIBRATE_BOTH
+
 namespace py = pybind11;
 
 #define WORD_BITS 64
@@ -616,7 +618,8 @@ static void phase_router_original(
     const uint64_t *col_perm_S,
     const uint64_t *col_perm_T,
     int *routes,
-    uint64_t seed_base)
+    uint64_t seed_base,
+    RouterMetrics *metrics)
 {
     // Step 1: Cumulative row offsets
     std::vector<size_t> row_offsets_S(N, 0);
@@ -667,35 +670,54 @@ static void phase_router_original(
     rotate90_clockwise(T_shuf.data(), T_final.data(), N, NB_words);
 
     // Step 5: AND + extract routes (with pre-reserved candidates)
-#pragma omp parallel for schedule(static) if (N >= 512)
-    for (size_t i = 0; i < N; i++)
+#pragma omp parallel if (N >= 512)
     {
-        const uint64_t *Srow = &S_final[i * NB_words];
-        const uint64_t *Trow = &T_final[i * NB_words];
+        uint64_t local_events = 0;
+        uint64_t local_words = 0;
 
-        std::vector<size_t> candidates;
-        candidates.reserve(64);
-
-        for (size_t w = 0; w < NB_words; w++)
+#pragma omp for schedule(static)
+        for (size_t i = 0; i < N; i++)
         {
-            uint64_t m = Srow[w] & Trow[w];
-            while (m)
+            const uint64_t *Srow = &S_final[i * NB_words];
+            const uint64_t *Trow = &T_final[i * NB_words];
+
+            std::vector<size_t> candidates;
+            candidates.reserve(64);
+
+            for (size_t w = 0; w < NB_words; w++)
             {
-                size_t b = __builtin_ctzll(m);
-                candidates.push_back(w * WORD_BITS + b);
-                m &= m - 1;
+                uint64_t s = Srow[w];
+                uint64_t t = Trow[w];
+
+                if (s | t)
+                    local_words += 2; // both words touched
+
+                uint64_t m = s & t;
+                while (m)
+                {
+                    local_events++;
+                    size_t b = __builtin_ctzll(m);
+                    candidates.push_back(w * WORD_BITS + b);
+                    m &= m - 1;
+                }
             }
+
+            // Deterministic shuffle
+            std::mt19937_64 rng(seed_base + i);
+            std::shuffle(candidates.begin(), candidates.end(), rng);
+
+            size_t cnt = 0;
+            for (; cnt < k && cnt < candidates.size(); cnt++)
+                routes[i * k + cnt] = candidates[cnt];
+            for (; cnt < k; cnt++)
+                routes[i * k + cnt] = -1;
         }
 
-        // Deterministic shuffle
-        std::mt19937_64 rng(seed_base + i);
-        std::shuffle(candidates.begin(), candidates.end(), rng);
+#pragma omp atomic
+        metrics->events += local_events;
 
-        size_t cnt = 0;
-        for (; cnt < k && cnt < candidates.size(); cnt++)
-            routes[i * k + cnt] = candidates[cnt];
-        for (; cnt < k; cnt++)
-            routes[i * k + cnt] = -1;
+#pragma omp atomic
+        metrics->words_touched += local_words;
     }
 }
 
@@ -719,6 +741,14 @@ static const char *phase_router_bitpacked(
     RouterMetrics *metrics)
 
 {
+#ifdef FORCE_INTERVAL
+    std::cerr << "[build] FORCE_INTERVAL\n";
+#elif defined(FORCE_ORIGINAL)
+    std::cerr << "[build] FORCE_ORIGINAL\n";
+#else
+    std::cerr << "[build] HYBRID\n";
+#endif
+
     require_power_of_2(N);
 
     double density = estimate_density(S_bits, N, NB_words);
@@ -741,10 +771,10 @@ static const char *phase_router_bitpacked(
         use_original = true;
         reason = "N_small";
     }
-    else if (kn > 0.25)
+    else if (k >= N)
     {
         use_original = true;
-        reason = "high_kn";
+        reason = "k_ge_N";
     }
     else
     {
@@ -765,9 +795,100 @@ static const char *phase_router_bitpacked(
     double t_route = 0.0;
     double t_extract = 0.0;
 
+#ifdef CALIBRATE_BOTH
+
+    // -------------------------------
+    // 1. Run INTERVAL path
+    // -------------------------------
+    double tA = now_ms();
+
+    auto S_routed_i = route_dispatch(S_bits, N, NB_words);
+    auto T_routed_i = route_dispatch(T_bits, N, NB_words);
+
+    double tB = now_ms();
+
+    RouterMetrics metrics_i;
+
+    std::vector<int> routes_i(N * k);
+
+    and_extract_dispatch(
+        S_routed_i.data(),
+        T_routed_i.data(),
+        N, NB_words, k,
+        routes_i.data(),
+        seed_base,
+        &metrics_i);
+
+    double tC = now_ms();
+
+    double interval_route = tB - tA;
+    double interval_extract = tC - tB;
+    double interval_total = interval_route + interval_extract;
+
+    // -------------------------------
+    // 2. Run ORIGINAL path
+    // -------------------------------
+    std::vector<uint64_t> col_perm_S(N), col_perm_T(N);
+    for (size_t i = 0; i < N; i++)
+    {
+        col_perm_S[i] = i;
+        col_perm_T[i] = i;
+    }
+
+    RouterMetrics metrics_o;
+    std::vector<int> routes_o(N * k);
+
+    double tD = now_ms();
+
+    phase_router_original(
+        N, k, NB_words,
+        S_bits, T_bits,
+        col_perm_S.data(), col_perm_T.data(),
+        routes_o.data(),
+        seed_base,
+        &metrics_o);
+
+    double tE = now_ms();
+
+    double original_total = tE - tD;
+
+    // -------------------------------
+    // 3. Pick best
+    // -------------------------------
+    bool use_orig = (original_total < interval_total);
+
+    std::cerr << "[calib] interval=" << interval_total
+              << " original=" << original_total
+              << " -> " << (use_orig ? "original" : "interval")
+              << "\n";
+
+    if (use_orig)
+    {
+        std::memcpy(routes, routes_o.data(), sizeof(int) * N * k);
+        *metrics = metrics_o;
+        *out_route_time = original_total;
+        *out_extract_time = 0.0;
+
+        return "original";
+    }
+    else
+    {
+        std::memcpy(routes, routes_i.data(), sizeof(int) * N * k);
+        *metrics = metrics_i;
+        *out_route_time = interval_route;
+        *out_extract_time = interval_extract;
+
+        return "interval";
+    }
+
+#else
+
+    // -------------------------------
+    // NORMAL FAST PATH
+    // -------------------------------
+
     if (use_original)
     {
-        // identity perms (same as before)
         std::vector<uint64_t> col_perm_S(N), col_perm_T(N);
         for (size_t i = 0; i < N; i++)
         {
@@ -781,15 +902,13 @@ static const char *phase_router_bitpacked(
             N, k, NB_words,
             S_bits, T_bits,
             col_perm_S.data(), col_perm_T.data(),
-            routes, seed_base);
+            routes, seed_base,
+            metrics);
 
         double tB = now_ms();
 
-        t_route = tB - tA;
-        t_extract = 0.0;
-
-        *out_route_time = t_route;
-        *out_extract_time = t_extract;
+        *out_route_time = tB - tA;
+        *out_extract_time = 0.0;
 
         return "original";
     }
@@ -812,14 +931,13 @@ static const char *phase_router_bitpacked(
 
         double tC = now_ms();
 
-        t_route = tB - tA;
-        t_extract = tC - tB;
-
-        *out_route_time = t_route;
-        *out_extract_time = t_extract;
+        *out_route_time = tB - tA;
+        *out_extract_time = tC - tB;
 
         return "interval";
     }
+
+#endif
 }
 
 // ------------------------------------------------------------

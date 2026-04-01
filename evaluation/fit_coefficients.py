@@ -27,10 +27,10 @@ def fit_model(data):
         words  = r["words_touched"]
 
         X.append([
-            1,
-            N,
-            events,
-            words
+            1.0,
+            N,                      # routing work
+            r["events"],            # exact event count
+            r["words_touched"],     # exact memory/scan work
         ])
 
         y.append(t)

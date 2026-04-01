@@ -8,14 +8,22 @@ from collections import defaultdict
 from pathlib import Path
 import router
 
+import os
+print("RUNNING FILE:", os.path.abspath(__file__))
+
 RESULTS_DIR = Path("results/density_sweep")
 
 Ns = [4096, 8192, 16384, 32768]
-densities = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1]
+densities = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5]
+k_values = [8, 64, 512, 2048, 8192]
+NUM_TRIALS = 5
 
-NUM_TRIALS = 10
 SEED = 42
 
+# Ns = [4096]
+# densities = [0.01, 0.05]
+# k_values = [8, 2048]
+# NUM_TRIALS = 1
 
 # ------------------------------------------------------------
 # Controlled-density generator
@@ -43,6 +51,10 @@ def bench(N, density, k):
     times_extract = []
     fills = []
 
+    events_list = []
+    words_list = []
+    kernels = [] 
+
     for t in range(NUM_TRIALS):
         S = generate_fixed_density(N, density, SEED + t)
         T = generate_fixed_density(N, density, SEED + 100 + t)
@@ -55,6 +67,10 @@ def bench(N, density, k):
         times_extract.append(stats["extract_time_ms"])
         fills.append(stats["fill_ratio"])
 
+        events_list.append(stats["events"])
+        words_list.append(stats["words_touched"])
+        kernels.append(stats["kernel"])
+
     return {
         "N": N,
         "density": density,
@@ -62,7 +78,11 @@ def bench(N, density, k):
         "route_time_ms": float(np.mean(times_route)),
         "extract_time_ms": float(np.mean(times_extract)),
         "fill_ratio": float(np.mean(fills)),
+        "events": float(np.mean(events_list)),
+        "words_touched": float(np.mean(words_list)),
+        "kernel": max(set(kernels), key=kernels.count),
     }
+
 def bench_equal_work(N, target_density_product, k):
     # density(S) = density(T) = sqrt(target)
     d = np.sqrt(target_density_product)
@@ -151,7 +171,7 @@ def plot_runtime_vs_events(data):
     plt.figure()
 
     for N, results in grouped.items():
-        events = [r["N"] * r["fill_ratio"] for r in results]
+        events = [r["events"] for r in results]
         times = [r["route_time_ms"] + r["extract_time_ms"] for r in results]
 
         plt.plot(events, times, marker="o", label=f"N={N}")
@@ -175,22 +195,35 @@ def group_by_N(data):
 # ------------------------------------------------------------
 
 def main():
+
+    print("=== DEBUG ===")
+    print("FILE:", os.path.abspath(__file__))
+    print("CWD:", os.getcwd())
+    print("Ns =", Ns)
+    print("densities =", densities)
+    print("k_values =", k_values if "k_values" in globals() else "N/A")
+    print("NUM_TRIALS =", NUM_TRIALS)
+    print("================\n")
+
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     results = []
 
     for N in Ns:
-        k = 64  # keep fixed for now
 
         print(f"\n=== N = {N} ===")
 
-        for d in densities:
-            print(f"  density={d:.4f} ...", end="", flush=True)
+        for k in k_values:
 
-            r = bench(N, d, k)
-            results.append(r)
+            print(f"\n=== k = {k} ===")
 
-            print(f" {r['route_time_ms']:.2f} + {r['extract_time_ms']:.2f} ms, fill={r['fill_ratio']*100:.2f}%")
+            for d in densities:
+                print(f"  density={d:.4f} ...", end="", flush=True)
+
+                r = bench(N, d, k)
+                results.append(r)
+
+                print(f" {r['route_time_ms']:.2f} + {r['extract_time_ms']:.2f} ms, fill={r['fill_ratio']*100:.2f}%")
 
     out_path = RESULTS_DIR / "density_sweep.json"
     with open(out_path, "w") as f:
@@ -243,7 +276,7 @@ def main():
 
     out_eq = RESULTS_DIR / "routing_vs_N.json"
     with open(out_eq, "w") as f:
-        json.dump(equal_results, f, indent=2)
+        json.dump(results, f, indent=2)
 
     print(f"\n✓ Routing vs N results saved to {out_eq}")
 
@@ -257,7 +290,7 @@ def main():
 
     out_eq = RESULTS_DIR / "extract_vs_output.json"
     with open(out_eq, "w") as f:
-        json.dump(equal_results, f, indent=2)
+        json.dump(results, f, indent=2)
 
     print(f"\n✓ Extraction vs output size results saved to {out_eq}")
 
@@ -271,7 +304,7 @@ def main():
 
     out_eq = RESULTS_DIR / "normalized.json"
     with open(out_eq, "w") as f:
-        json.dump(equal_results, f, indent=2)
+        json.dump(results, f, indent=2)
 
     print(f"\n✓ normalized saved to {out_eq}")
 
