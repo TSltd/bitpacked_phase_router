@@ -3,6 +3,8 @@
 import numpy as np
 import json
 import argparse
+import matplotlib.pyplot as plt
+from collections import defaultdict
 from pathlib import Path
 import router
 
@@ -37,7 +39,8 @@ def generate_fixed_density(N, density, seed):
 # ------------------------------------------------------------
 
 def bench(N, density, k):
-    times = []
+    times_route = []
+    times_extract = []
     fills = []
 
     for t in range(NUM_TRIALS):
@@ -48,21 +51,18 @@ def bench(N, density, k):
 
         stats = router.pack_and_route(S, T, k, routes, seed=1234 + t)
 
-
-        times.append(stats["routing_time_ms"])
+        times_route.append(stats["route_time_ms"])
+        times_extract.append(stats["extract_time_ms"])
         fills.append(stats["fill_ratio"])
-        
 
     return {
         "N": N,
         "density": density,
         "k": k,
-        "routing_time_ms_mean": float(np.mean(times)),
-        "routing_time_ms_std": float(np.std(times)),
-        "fill_ratio_mean": float(np.mean(fills)),
-        "fill_ratio": stats["fill_ratio"],
+        "route_time_ms": float(np.mean(times_route)),
+        "extract_time_ms": float(np.mean(times_extract)),
+        "fill_ratio": float(np.mean(fills)),
     }
-
 def bench_equal_work(N, target_density_product, k):
     # density(S) = density(T) = sqrt(target)
     d = np.sqrt(target_density_product)
@@ -81,6 +81,94 @@ def bench_equal_work(N, target_density_product, k):
         "routing_time_ms": stats["routing_time_ms"],
         "fill_ratio": stats["fill_ratio"],
     }
+
+def plot_routing_vs_N(data):
+    grouped = group_by_N(data)
+
+    Ns = []
+    route_times = []
+
+    for N, results in grouped.items():
+        Ns.append(N)
+        route_times.append(np.mean([r["route_time_ms"] for r in results]))
+
+    plt.figure()
+    plt.plot(Ns, route_times, marker="o")
+
+    plt.xlabel("N")
+    plt.ylabel("Routing time (ms)")
+    plt.title("Routing cost vs N")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.grid(True)
+
+    plt.savefig(RESULTS_DIR / "routing_vs_N.png")
+
+def plot_extract_vs_output(data):
+    grouped = group_by_N(data)
+
+    plt.figure()
+
+    for N, results in grouped.items():
+        fills = [r["fill_ratio"] for r in results]
+        times = [r["extract_time_ms"] for r in results]
+
+        plt.plot(fills, times, marker="o", label=f"N={N}")
+
+    plt.xlabel("Output density")
+    plt.ylabel("Extraction time (ms)")
+    plt.title("Extraction vs Output Size")
+    plt.legend()
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.grid(True)
+
+    plt.savefig(RESULTS_DIR / "extract_vs_output.png")
+
+def plot_normalized(data):
+    grouped = group_by_N(data)
+
+    plt.figure()
+
+    for N, results in grouped.items():
+        fills = [r["fill_ratio"] for r in results]
+        times = [(r["route_time_ms"] + r["extract_time_ms"]) / N for r in results]
+
+        plt.plot(fills, times, marker="o", label=f"N={N}")
+
+    plt.xlabel("Output density")
+    plt.ylabel("Runtime / N")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.legend()
+    plt.grid(True)
+
+    plt.savefig(RESULTS_DIR / "normalized.png")
+
+def plot_runtime_vs_events(data):
+    grouped = group_by_N(data)
+
+    plt.figure()
+
+    for N, results in grouped.items():
+        events = [r["N"] * r["fill_ratio"] for r in results]
+        times = [r["route_time_ms"] + r["extract_time_ms"] for r in results]
+
+        plt.plot(events, times, marker="o", label=f"N={N}")
+
+    plt.xlabel("Events (N * fill_ratio)")
+    plt.ylabel("Total runtime (ms)")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.legend()
+    plt.grid(True)
+
+    plt.savefig(RESULTS_DIR / "runtime_vs_events.png")
+def group_by_N(data):
+    grouped = defaultdict(list)
+    for r in data:
+        grouped[r["N"]].append(r)
+    return grouped
 
 # ------------------------------------------------------------
 # Main
@@ -102,7 +190,7 @@ def main():
             r = bench(N, d, k)
             results.append(r)
 
-            print(f" {r['routing_time_ms_mean']:.2f} ms, fill={r['fill_ratio_mean']*100:.2f}%")
+            print(f" {r['route_time_ms']:.2f} + {r['extract_time_ms']:.2f} ms, fill={r['fill_ratio']*100:.2f}%")
 
     out_path = RESULTS_DIR / "density_sweep.json"
     with open(out_path, "w") as f:
@@ -145,6 +233,60 @@ def main():
 
     print(f"\n✓ equal-work results saved to {out_eq}")
 
+# ---------
+
+    print("\n" + "="*60)
+    print(" Routing vs N Experiment")
+    print("="*60)
+
+    plot_routing_vs_N(results)
+
+    out_eq = RESULTS_DIR / "routing_vs_N.json"
+    with open(out_eq, "w") as f:
+        json.dump(equal_results, f, indent=2)
+
+    print(f"\n✓ Routing vs N results saved to {out_eq}")
+
+# ----------
+
+    print("\n" + "="*60)
+    print(" Extraction vs output size Experiment")
+    print("="*60)
+
+    plot_extract_vs_output(results)
+
+    out_eq = RESULTS_DIR / "extract_vs_output.json"
+    with open(out_eq, "w") as f:
+        json.dump(equal_results, f, indent=2)
+
+    print(f"\n✓ Extraction vs output size results saved to {out_eq}")
+
+# -----------
+
+    print("\n" + "="*60)
+    print(" runtime / N (normalized) Experiment")
+    print("="*60)
+
+    plot_normalized(results)
+
+    out_eq = RESULTS_DIR / "normalized.json"
+    with open(out_eq, "w") as f:
+        json.dump(equal_results, f, indent=2)
+
+    print(f"\n✓ normalized saved to {out_eq}")
+
+# ------------
+
+    print("\n" + "="*60)
+    print(" runtime vs events Experiment")
+    print("="*60)
+
+    plot_runtime_vs_events(results)
+    out_eq = RESULTS_DIR / "runtime_vs_events.json"
+    with open(out_eq, "w") as f:
+        json.dump(equal_results, f, indent=2)
+
+    print(f"\n✓ runtime vs events results saved to {out_eq}")
 
 if __name__ == "__main__":
     main()

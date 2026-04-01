@@ -21,6 +21,12 @@ namespace py = pybind11;
 
 static constexpr size_t N_SMALL_CUTOFF = 256;
 
+struct RouterMetrics
+{
+    uint64_t events = 0;        // surviving AND hits
+    uint64_t words_touched = 0; // number of word reads in extract
+};
+
 // ---------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------
@@ -156,60 +162,75 @@ static inline void and_extract_fused_templated(
     size_t N,
     size_t k,
     int *routes,
-    uint64_t seed_base)
+    uint64_t seed_base,
+    RouterMetrics *metrics)
 {
-#pragma omp parallel for schedule(static) if (N * k >= 16384)
-    for (size_t i = 0; i < N; i++)
+#pragma omp parallel
     {
-        const uint64_t *Srow = &S[i * NBW];
+        uint64_t local_events = 0;
+        uint64_t local_words = 0;
 
-        // Hoist transpose-access constants outside inner loop
-        const size_t iw = i >> 6;
-        const uint64_t ibit = 1ULL << (i & 63);
+#pragma omp for schedule(static)
+        for (size_t i = 0; i < N; i++)
+        {
+            const uint64_t *Srow = &S[i * NBW];
 
-        int count = 0;
+            const size_t iw = i >> 6;
+            const uint64_t ibit = 1ULL << (i & 63);
+
+            int count = 0;
 
 #pragma unroll
-        for (int w = 0; w < NBW; w++)
-        {
-            uint64_t m = Srow[w];
-
-            while (m)
+            for (int w = 0; w < NBW; w++)
             {
-                int b = __builtin_ctzll(m);
-                int j = (w << 6) + b;
+                uint64_t m = Srow[w];
 
-                // Fused rotate: T_final[i][j] == T_routed[N-1-j][i]
-                const uint64_t *Trow = &T_routed[(N - 1 - j) * NBW];
-                if (Trow[iw] & ibit)
+                if (m)
+                    local_words++;
+
+                while (m)
                 {
-                    if (count < (int)k)
+                    int b = __builtin_ctzll(m);
+                    int j = (w << 6) + b;
+
+                    const uint64_t *Trow = &T_routed[(N - 1 - j) * NBW];
+                    local_words++;
+
+                    if (Trow[iw] & ibit)
                     {
-                        routes[i * k + count] = j;
+                        local_events++;
+
+                        if (count < (int)k)
+                            routes[i * k + count] = j;
+                        else
+                        {
+                            uint64_t h = splitmix64(
+                                seed_base ^
+                                (uint64_t(i) << 32) ^
+                                (uint64_t(j) << 1) ^
+                                count);
+
+                            uint64_t r = fast_range(h, (uint64_t)(count + 1));
+                            if (r < (uint64_t)k)
+                                routes[i * k + r] = j;
+                        }
+
+                        count++;
                     }
-                    else
-                    {
-                        uint64_t h = splitmix64(
-                            seed_base ^
-                            (uint64_t(i) << 32) ^
-                            (uint64_t(j) << 1) ^
-                            count);
 
-                        uint64_t r = fast_range(h, (uint64_t)(count + 1));
-
-                        if (r < (uint64_t)k)
-                            routes[i * k + r] = j;
-                    }
-
-                    count++;
+                    m &= m - 1;
                 }
-
-                m &= m - 1;
             }
+
+            for (int jj = count; jj < (int)k; jj++)
+                routes[i * k + jj] = -1;
         }
 
-        for (int jj = count; jj < (int)k; jj++)
-            routes[i * k + jj] = -1;
+#pragma omp atomic
+        metrics->events += local_events;
+
+#pragma omp atomic
+        metrics->words_touched += local_words;
     }
 }
 
@@ -311,59 +332,78 @@ static void and_extract_fused_generic(
     size_t NB_words,
     size_t k,
     int *routes,
-    uint64_t seed_base)
+    uint64_t seed_base,
+    RouterMetrics *metrics)
 {
-#pragma omp parallel for schedule(static) if (N * k >= 16384)
-    for (size_t i = 0; i < N; i++)
+#pragma omp parallel
     {
-        const uint64_t *Srow = &S[i * NB_words];
+        uint64_t local_events = 0;
+        uint64_t local_words = 0;
 
-        // Hoist transpose-access constants outside inner loop
-        const size_t iw = i >> 6;
-        const uint64_t ibit = 1ULL << (i & 63);
-
-        int count = 0;
-
-        for (size_t w = 0; w < NB_words; w++)
+#pragma omp for schedule(static)
+        for (size_t i = 0; i < N; i++)
         {
-            uint64_t m = Srow[w];
+            const uint64_t *Srow = &S[i * NB_words];
 
-            while (m)
+            const size_t iw = i >> 6;
+            const uint64_t ibit = 1ULL << (i & 63);
+
+            int count = 0;
+
+            for (size_t w = 0; w < NB_words; w++)
             {
-                int b = __builtin_ctzll(m);
-                int j = (w << 6) + b;
+                uint64_t m = Srow[w];
 
-                // Fused rotate: T_final[i][j] == T_routed[N-1-j][i]
-                const uint64_t *Trow = &T_routed[(N - 1 - j) * NB_words];
-                if (Trow[iw] & ibit)
+                if (m)
+                    local_words++;
+
+                while (m)
                 {
-                    if (count < (int)k)
+                    int b = __builtin_ctzll(m);
+                    int j = (w << 6) + b;
+
+                    const uint64_t *Trow = &T_routed[(N - 1 - j) * NB_words];
+                    local_words++;
+
+                    if (Trow[iw] & ibit)
                     {
-                        routes[i * k + count] = j;
+                        local_events++;
+
+                        if (count < (int)k)
+                        {
+                            routes[i * k + count] = j;
+                        }
+                        else
+                        {
+                            uint64_t h = splitmix64(
+                                seed_base ^
+                                (uint64_t(i) << 32) ^
+                                (uint64_t(j) << 1) ^
+                                count);
+
+                            uint64_t r = fast_range(h, (uint64_t)(count + 1));
+
+                            if (r < (uint64_t)k)
+                                routes[i * k + r] = j;
+                        }
+
+                        count++;
                     }
-                    else
-                    {
-                        uint64_t h = splitmix64(
-                            seed_base ^
-                            (uint64_t(i) << 32) ^
-                            (uint64_t(j) << 1) ^
-                            count);
 
-                        uint64_t r = fast_range(h, (uint64_t)(count + 1));
-
-                        if (r < (uint64_t)k)
-                            routes[i * k + r] = j;
-                    }
-
-                    count++;
+                    m &= m - 1;
                 }
-
-                m &= m - 1;
             }
+
+            for (int jj = count; jj < (int)k; jj++)
+                routes[i * k + jj] = -1;
         }
 
-        for (int jj = count; jj < (int)k; jj++)
-            routes[i * k + jj] = -1;
+        // ---- reduction ----
+#pragma omp atomic
+        metrics->events += local_events;
+
+#pragma omp atomic
+        metrics->words_touched += local_words;
     }
 }
 
@@ -374,24 +414,25 @@ static void and_extract_dispatch(
     size_t NB_words,
     size_t k,
     int *routes,
-    uint64_t seed_base)
+    uint64_t seed_base,
+    RouterMetrics *metrics)
 {
     switch (NB_words)
     {
     case 4:
-        and_extract_fused_templated<4>(S, T_routed, N, k, routes, seed_base);
+        and_extract_fused_templated<4>(S, T_routed, N, k, routes, seed_base, metrics);
         break;
     case 8:
-        and_extract_fused_templated<8>(S, T_routed, N, k, routes, seed_base);
+        and_extract_fused_templated<8>(S, T_routed, N, k, routes, seed_base, metrics);
         break;
     case 16:
-        and_extract_fused_templated<16>(S, T_routed, N, k, routes, seed_base);
+        and_extract_fused_templated<16>(S, T_routed, N, k, routes, seed_base, metrics);
         break;
     case 32:
-        and_extract_fused_templated<32>(S, T_routed, N, k, routes, seed_base);
+        and_extract_fused_templated<32>(S, T_routed, N, k, routes, seed_base, metrics);
         break;
     default:
-        and_extract_fused_generic(S, T_routed, N, NB_words, k, routes, seed_base);
+        and_extract_fused_generic(S, T_routed, N, NB_words, k, routes, seed_base, metrics);
     }
 }
 
@@ -672,18 +713,18 @@ static const char *phase_router_bitpacked(
     const uint64_t * /*row_perm_T*/,
     int *routes,
     const char * /*debug_prefix*/,
-    uint64_t seed_base)
+    uint64_t seed_base,
+    double *out_route_time,
+    double *out_extract_time,
+    RouterMetrics *metrics)
+
 {
     require_power_of_2(N);
 
-    // ---- estimate density ----
     double density = estimate_density(S_bits, N, NB_words);
-
-    // ---- k/N ratio ----
     double kn = double(k) / double(N);
 
     bool use_original;
-
     const char *reason = "";
 
 #ifdef FORCE_ORIGINAL
@@ -695,7 +736,6 @@ static const char *phase_router_bitpacked(
     reason = "FORCE_INTERVAL";
 
 #else
-
     if (N <= N_SMALL_CUTOFF)
     {
         use_original = true;
@@ -711,10 +751,8 @@ static const char *phase_router_bitpacked(
         use_original = false;
         reason = "interval_default";
     }
-
 #endif
 
-    // ---- debug print ----
     std::cerr << "[dispatch] N=" << N
               << " k=" << k
               << " density=" << density
@@ -724,9 +762,12 @@ static const char *phase_router_bitpacked(
               << " nnz_per_row=" << (density * N)
               << "\n";
 
-    // ---- dispatch ----
+    double t_route = 0.0;
+    double t_extract = 0.0;
+
     if (use_original)
     {
+        // identity perms (same as before)
         std::vector<uint64_t> col_perm_S(N), col_perm_T(N);
         for (size_t i = 0; i < N; i++)
         {
@@ -734,10 +775,7 @@ static const char *phase_router_bitpacked(
             col_perm_T[i] = i;
         }
 
-        std::mt19937_64 rng_S(seed_base ^ 0x9E3779B97F4A7C15ULL);
-        std::mt19937_64 rng_T(seed_base ^ 0xD1B54A32D192ED03ULL);
-        std::shuffle(col_perm_S.begin(), col_perm_S.end(), rng_S);
-        std::shuffle(col_perm_T.begin(), col_perm_T.end(), rng_T);
+        double tA = now_ms();
 
         phase_router_original(
             N, k, NB_words,
@@ -745,18 +783,40 @@ static const char *phase_router_bitpacked(
             col_perm_S.data(), col_perm_T.data(),
             routes, seed_base);
 
+        double tB = now_ms();
+
+        t_route = tB - tA;
+        t_extract = 0.0;
+
+        *out_route_time = t_route;
+        *out_extract_time = t_extract;
+
         return "original";
     }
     else
     {
+        double tA = now_ms();
+
         auto S_routed = route_dispatch(S_bits, N, NB_words);
         auto T_routed = route_dispatch(T_bits, N, NB_words);
+
+        double tB = now_ms();
 
         and_extract_dispatch(
             S_routed.data(),
             T_routed.data(),
             N, NB_words, k,
-            routes, seed_base);
+            routes,
+            seed_base,
+            metrics);
+
+        double tC = now_ms();
+
+        t_route = tB - tA;
+        t_extract = tC - tB;
+
+        *out_route_time = t_route;
+        *out_extract_time = t_extract;
 
         return "interval";
     }
@@ -813,6 +873,11 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
 
     double t0_route = now_ms();
 
+    double route_time = 0.0;
+    double extract_time = 0.0;
+
+    RouterMetrics metrics;
+
     const char *kernel_used = phase_router_bitpacked(
         N, k, NB_words,
         S_bits.data(),
@@ -822,7 +887,10 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
         row_perm_T.data(),
         (int *)routes_np.mutable_data(),
         nullptr,
-        seed_base);
+        seed_base,
+        &route_time,
+        &extract_time,
+        &metrics);
 
     double t1_route = now_ms();
 
@@ -841,6 +909,10 @@ py::dict pack_and_route(py::array_t<uint8_t> S_np,
     d["kernel"] = std::string(kernel_used);
     d["density"] = density;
     d["fill_ratio"] = double(active) / double(N * k);
+    d["route_time_ms"] = route_time;
+    d["extract_time_ms"] = extract_time;
+    d["events"] = (double)metrics.events;
+    d["words_touched"] = (double)metrics.words_touched;
 
     return d;
 }
@@ -896,6 +968,11 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
                              ? std::chrono::high_resolution_clock::now().time_since_epoch().count()
                              : seed;
 
+    double route_time = 0.0;
+    double extract_time = 0.0;
+
+    RouterMetrics metrics;
+
     phase_router_bitpacked(
         N, k, NB_words,
         S_bits.data(),
@@ -905,7 +982,10 @@ void phase_router_cpp(py::array_t<uint8_t> S_np,
         nullptr,
         (int *)routes_np.mutable_data(),
         nullptr,
-        seed_base);
+        seed_base,
+        &route_time,
+        &extract_time,
+        &metrics);
 }
 
 // ------------------------------------------------------------
