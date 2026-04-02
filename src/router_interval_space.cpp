@@ -14,8 +14,6 @@
 #include <omp.h>
 #include <iostream>
 
-#define CALIBRATE_BOTH
-
 namespace py = pybind11;
 
 #define WORD_BITS 64
@@ -236,8 +234,219 @@ static inline void and_extract_fused_templated(
     }
 }
 
+// ---------------------------------------------------------
+// Shuffled AND-extract (index indirection, no physical bit movement)
+// ---------------------------------------------------------
+// Instead of physically permuting column bits in S and T,
+// we apply the column permutations as index lookups during
+// AND-extract. Cost: O(1) per candidate (table lookup) vs
+// O(N²) for physical bit scatter.
+
+template <int NBW>
+static inline void and_extract_shuffled_templated(
+    const uint64_t *S_routed,
+    const uint64_t *T_routed,
+    size_t N,
+    size_t k,
+    const uint64_t *inv_col_perm_S,
+    const uint64_t *col_perm_T,
+    int *routes,
+    uint64_t seed_base,
+    RouterMetrics *metrics)
+{
+#pragma omp parallel
+    {
+        uint64_t local_events = 0;
+        uint64_t local_words = 0;
+
+#pragma omp for schedule(static)
+        for (size_t i = 0; i < N; i++)
+        {
+            const uint64_t *Srow = &S_routed[i * NBW];
+
+            // T column shuffle: check col_perm_T[i] instead of i
+            const size_t t_check = col_perm_T[i];
+            const size_t t_check_w = t_check >> 6;
+            const uint64_t t_check_bit = 1ULL << (t_check & 63);
+
+            int count = 0;
+
+#pragma unroll
+            for (int w = 0; w < NBW; w++)
+            {
+                uint64_t m = Srow[w];
+
+                if (m)
+                    local_words++;
+
+                while (m)
+                {
+                    int b = __builtin_ctzll(m);
+                    int j_phys = (w << 6) + b;
+
+                    // S column shuffle: map physical → logical via inverse
+                    int p = (int)inv_col_perm_S[j_phys];
+
+                    const uint64_t *Trow = &T_routed[(N - 1 - p) * NBW];
+                    local_words++;
+
+                    if (Trow[t_check_w] & t_check_bit)
+                    {
+                        local_events++;
+
+                        if (count < (int)k)
+                            routes[i * k + count] = p;
+                        else
+                        {
+                            uint64_t h = splitmix64(
+                                seed_base ^
+                                (uint64_t(i) << 32) ^
+                                (uint64_t(p) << 1) ^
+                                count);
+
+                            uint64_t r = fast_range(h, (uint64_t)(count + 1));
+                            if (r < (uint64_t)k)
+                                routes[i * k + r] = p;
+                        }
+
+                        count++;
+                    }
+
+                    m &= m - 1;
+                }
+            }
+
+            for (int jj = count; jj < (int)k; jj++)
+                routes[i * k + jj] = -1;
+        }
+
+#pragma omp atomic
+        metrics->events += local_events;
+
+#pragma omp atomic
+        metrics->words_touched += local_words;
+    }
+}
+
+static void and_extract_shuffled_generic(
+    const uint64_t *S_routed,
+    const uint64_t *T_routed,
+    size_t N,
+    size_t NB_words,
+    size_t k,
+    const uint64_t *inv_col_perm_S,
+    const uint64_t *col_perm_T,
+    int *routes,
+    uint64_t seed_base,
+    RouterMetrics *metrics)
+{
+#pragma omp parallel
+    {
+        uint64_t local_events = 0;
+        uint64_t local_words = 0;
+
+#pragma omp for schedule(static)
+        for (size_t i = 0; i < N; i++)
+        {
+            const uint64_t *Srow = &S_routed[i * NB_words];
+
+            const size_t t_check = col_perm_T[i];
+            const size_t t_check_w = t_check >> 6;
+            const uint64_t t_check_bit = 1ULL << (t_check & 63);
+
+            int count = 0;
+
+            for (size_t w = 0; w < NB_words; w++)
+            {
+                uint64_t m = Srow[w];
+
+                if (m)
+                    local_words++;
+
+                while (m)
+                {
+                    int b = __builtin_ctzll(m);
+                    int j_phys = (w << 6) + b;
+
+                    int p = (int)inv_col_perm_S[j_phys];
+
+                    const uint64_t *Trow = &T_routed[(N - 1 - p) * NB_words];
+                    local_words++;
+
+                    if (Trow[t_check_w] & t_check_bit)
+                    {
+                        local_events++;
+
+                        if (count < (int)k)
+                        {
+                            routes[i * k + count] = p;
+                        }
+                        else
+                        {
+                            uint64_t h = splitmix64(
+                                seed_base ^
+                                (uint64_t(i) << 32) ^
+                                (uint64_t(p) << 1) ^
+                                count);
+
+                            uint64_t r = fast_range(h, (uint64_t)(count + 1));
+
+                            if (r < (uint64_t)k)
+                                routes[i * k + r] = p;
+                        }
+
+                        count++;
+                    }
+
+                    m &= m - 1;
+                }
+            }
+
+            for (int jj = count; jj < (int)k; jj++)
+                routes[i * k + jj] = -1;
+        }
+
+#pragma omp atomic
+        metrics->events += local_events;
+
+#pragma omp atomic
+        metrics->words_touched += local_words;
+    }
+}
+
+static void and_extract_shuffled_dispatch(
+    const uint64_t *S_routed,
+    const uint64_t *T_routed,
+    size_t N,
+    size_t NB_words,
+    size_t k,
+    const uint64_t *inv_col_perm_S,
+    const uint64_t *col_perm_T,
+    int *routes,
+    uint64_t seed_base,
+    RouterMetrics *metrics)
+{
+    switch (NB_words)
+    {
+    case 4:
+        and_extract_shuffled_templated<4>(S_routed, T_routed, N, k, inv_col_perm_S, col_perm_T, routes, seed_base, metrics);
+        break;
+    case 8:
+        and_extract_shuffled_templated<8>(S_routed, T_routed, N, k, inv_col_perm_S, col_perm_T, routes, seed_base, metrics);
+        break;
+    case 16:
+        and_extract_shuffled_templated<16>(S_routed, T_routed, N, k, inv_col_perm_S, col_perm_T, routes, seed_base, metrics);
+        break;
+    case 32:
+        and_extract_shuffled_templated<32>(S_routed, T_routed, N, k, inv_col_perm_S, col_perm_T, routes, seed_base, metrics);
+        break;
+    default:
+        and_extract_shuffled_generic(S_routed, T_routed, N, NB_words, k, inv_col_perm_S, col_perm_T, routes, seed_base, metrics);
+    }
+}
+
 // ------------------------------------------------------------
-// Dispatchers
+// Dispatchers (non-shuffled, used by CALIBRATE paths only)
 // ------------------------------------------------------------
 
 static std::vector<uint64_t> route_dispatch(
@@ -792,110 +1001,21 @@ static const char *phase_router_bitpacked(
               << " nnz_per_row=" << (density * N)
               << "\n";
 
-    double t_route = 0.0;
-    double t_extract = 0.0;
-
-#ifdef CALIBRATE_BOTH
-
-    // -------------------------------
-    // 1. Run INTERVAL path
-    // -------------------------------
-    double tA = now_ms();
-
-    auto S_routed_i = route_dispatch(S_bits, N, NB_words);
-    auto T_routed_i = route_dispatch(T_bits, N, NB_words);
-
-    double tB = now_ms();
-
-    RouterMetrics metrics_i;
-
-    std::vector<int> routes_i(N * k);
-
-    and_extract_dispatch(
-        S_routed_i.data(),
-        T_routed_i.data(),
-        N, NB_words, k,
-        routes_i.data(),
-        seed_base,
-        &metrics_i);
-
-    double tC = now_ms();
-
-    double interval_route = tB - tA;
-    double interval_extract = tC - tB;
-    double interval_total = interval_route + interval_extract;
-
-    // -------------------------------
-    // 2. Run ORIGINAL path
-    // -------------------------------
+    // Generate seed-randomized column permutations (matches router.cpp)
     std::vector<uint64_t> col_perm_S(N), col_perm_T(N);
     for (size_t i = 0; i < N; i++)
     {
         col_perm_S[i] = i;
         col_perm_T[i] = i;
     }
-
-    RouterMetrics metrics_o;
-    std::vector<int> routes_o(N * k);
-
-    double tD = now_ms();
-
-    phase_router_original(
-        N, k, NB_words,
-        S_bits, T_bits,
-        col_perm_S.data(), col_perm_T.data(),
-        routes_o.data(),
-        seed_base,
-        &metrics_o);
-
-    double tE = now_ms();
-
-    double original_total = tE - tD;
-
-    // -------------------------------
-    // 3. Pick best
-    // -------------------------------
-    bool use_orig = (original_total < interval_total);
-
-    std::cerr << "[calib] interval=" << interval_total
-              << " original=" << original_total
-              << " -> " << (use_orig ? "original" : "interval")
-              << "\n";
-
-    if (use_orig)
-    {
-        std::memcpy(routes, routes_o.data(), sizeof(int) * N * k);
-        *metrics = metrics_o;
-        *out_route_time = original_total;
-        *out_extract_time = 0.0;
-
-        return "original";
-    }
-    else
-    {
-        std::memcpy(routes, routes_i.data(), sizeof(int) * N * k);
-        *metrics = metrics_i;
-        *out_route_time = interval_route;
-        *out_extract_time = interval_extract;
-
-        return "interval";
-    }
-
-#else
-
-    // -------------------------------
-    // NORMAL FAST PATH
-    // -------------------------------
+    std::mt19937_64 rng_S(seed_base ^ 0x9E3779B97F4A7C15ULL);
+    std::mt19937_64 rng_T(seed_base ^ 0xD1B54A32D192ED03ULL);
+    std::shuffle(col_perm_S.begin(), col_perm_S.end(), rng_S);
+    std::shuffle(col_perm_T.begin(), col_perm_T.end(), rng_T);
 
     if (use_original)
     {
-        std::vector<uint64_t> col_perm_S(N), col_perm_T(N);
-        for (size_t i = 0; i < N; i++)
-        {
-            col_perm_S[i] = i;
-            col_perm_T[i] = i;
-        }
-
+        // Original path: rotate → col shuffle → rotate90 → AND extract
         double tA = now_ms();
 
         phase_router_original(
@@ -914,17 +1034,26 @@ static const char *phase_router_bitpacked(
     }
     else
     {
+        // Interval path: prefix-sum arc placement → AND extract with
+        // column shuffle via index indirection (no physical bit movement)
         double tA = now_ms();
 
         auto S_routed = route_dispatch(S_bits, N, NB_words);
         auto T_routed = route_dispatch(T_bits, N, NB_words);
 
+        // Precompute inverse of col_perm_S: inv[col_perm_S[p]] = p
+        std::vector<uint64_t> inv_col_perm_S(N);
+        for (size_t p = 0; p < N; p++)
+            inv_col_perm_S[col_perm_S[p]] = p;
+
         double tB = now_ms();
 
-        and_extract_dispatch(
+        and_extract_shuffled_dispatch(
             S_routed.data(),
             T_routed.data(),
             N, NB_words, k,
+            inv_col_perm_S.data(),
+            col_perm_T.data(),
             routes,
             seed_base,
             metrics);
@@ -936,8 +1065,6 @@ static const char *phase_router_bitpacked(
 
         return "interval";
     }
-
-#endif
 }
 
 // ------------------------------------------------------------
