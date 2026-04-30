@@ -547,4 +547,5 @@ Potential applications are suggested in [`applications.md`](docs/applications.md
 
 ---
 
-<img src="https://repo-view-counter.repo-view-counter-bitpackedphaserouter.workers.dev/track?cb=1" width="1" height="1" style="display:none;" alt="">
+<img src="https://repo-view-counter.repo-view-counter-bitpackedphaserouter.workers.dev/track?repo=repo-view-counter&cb=1" width="1" height="1" style="display:none;" alt="">
+
